@@ -4,7 +4,7 @@ import {
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
   peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS,
 } from "./engine.js";
-import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto } from "./useEvent.js";
+import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto, deleteEvent, leaveEventHistory, postSuggestion, fetchSuggestions } from "./useEvent.js";
 import { styles, GLOBAL_CSS, SERIF } from "./styles.js";
 
 // localStorage keys — remember who you are + which event you're in, on THIS device
@@ -12,6 +12,11 @@ const LS_PHONE = "lastcall_phone";
 const LS_NAME = "lastcall_name";
 const LS_EVENT = "lastcall_event";
 const LS_PERSON = "lastcall_person";
+
+// This phone number always gets host abilities (the app owner). Keys off the
+// phone typed on the welcome screen, so it only applies on devices signed in
+// with this number.
+const DEVELOPER_PHONE = "9737386806";
 
 // Catches any render crash and offers a way out, instead of a blank screen.
 class ErrorBoundary extends React.Component {
@@ -71,6 +76,7 @@ function FrontDoor({ onEnter }) {
   const [phone, setPhone] = useState(() => localStorage.getItem(LS_PHONE) || "");
   const [name, setName] = useState(() => localStorage.getItem(LS_NAME) || "");
   const [history, setHistory] = useState([]);
+  const [confirmRemove, setConfirmRemove] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -115,16 +121,40 @@ function FrontDoor({ onEnter }) {
             <div style={{ ...styles.kicker, marginTop: 20 }}>YOUR PAST EVENTS</div>
             <div style={styles.histList}>
               {history.map((h) => (
-                <div key={h.id} style={styles.histRow} onClick={() => { remember(); onEnter(h.id, null); }}>
-                  <div>
+                <div key={h.id} style={styles.histRow}>
+                  <div style={{ flex: 1, cursor: "pointer" }} onClick={() => { remember(); onEnter(h.id, h.personId || null); }}>
                     <div style={styles.histName}>{h.name}</div>
                     <div style={styles.histMeta}>{h.phase === "ended" ? "ended" : "live"} · {new Date(h.created_at).toLocaleDateString()} · {h.myRole}</div>
                   </div>
-                  <span style={styles.expandCaret}>›</span>
+                  <button style={styles.histRemove} onClick={(e) => { e.stopPropagation(); setConfirmRemove(h); }}>✕</button>
                 </div>
               ))}
             </div>
           </>
+        )}
+
+        {confirmRemove && (
+          <div style={styles.modalBg} onClick={() => setConfirmRemove(null)}>
+            <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.modalTitle}>Remove "{confirmRemove.name}"?</div>
+              <p style={styles.confirmText}>
+                {confirmRemove.myRole === "host"
+                  ? "You're the host — this permanently deletes the whole event and everyone's data in it. This can't be undone."
+                  : "This removes the event from your history. It stays live for everyone else."}
+              </p>
+              <div style={styles.formActions}>
+                <button style={styles.cancelBtn} onClick={() => setConfirmRemove(null)}>Cancel</button>
+                <button style={styles.dangerBtn} onClick={async () => {
+                  try {
+                    if (confirmRemove.myRole === "host") await deleteEvent(confirmRemove.id);
+                    else await leaveEventHistory(confirmRemove.personId);
+                  } catch (e) {}
+                  setHistory((hs) => hs.filter((x) => x.id !== confirmRemove.id));
+                  setConfirmRemove(null);
+                }}>{confirmRemove.myRole === "host" ? "Delete event" : "Remove"}</button>
+              </div>
+            </div>
+          </div>
         )}
 
         <p style={styles.disclaimer}>
@@ -285,7 +315,7 @@ function themedPage(settings, extra = {}) {
 // LIVE SCREEN
 // ============================================================
 function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
-  const { people, chat, settings, actions, joinCode, eventName } = ev;
+  const { people, chat, shotCalls, settings, actions, joinCode, eventName } = ev;
   const drinksMap = getDrinks(settings);
   const sizesMap = getSizes(settings);
   const theme = getTheme(settings);
@@ -305,7 +335,8 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const lastChatRef = useRef(chat.length);
 
   const me = people.find((p) => p.id === myPersonId);
-  const amHost = me?.role === "host";
+  const myPhone = (typeof localStorage !== "undefined" && localStorage.getItem(LS_PHONE)) || "";
+  const amHost = me?.role === "host" || (myPhone && myPhone === DEVELOPER_PHONE);
 
   // pop a toast when a new chat arrives from someone else
   useEffect(() => {
@@ -325,6 +356,25 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const openTab = (t) => { if (t === "chat") setChatSeen(Date.now()); setTab(t); };
   const partyDrinks = people.reduce((a, p) => a + drinkCountAtTime(p, liveNow), 0);
 
+  // shot call: show a full-screen takeover for any call we haven't seen yet
+  const shotEnabled = settings.shotCallEnabled === true;
+  const [shotSeen, setShotSeen] = useState(Date.now());
+  const [activeShot, setActiveShot] = useState(null);
+  const shotRef = useRef((shotCalls || []).length);
+  useEffect(() => {
+    if ((shotCalls || []).length > shotRef.current) {
+      const newest = shotCalls[shotCalls.length - 1];
+      if (newest && newest.t > shotSeen) setActiveShot(newest);
+    }
+    shotRef.current = (shotCalls || []).length;
+  }, [shotCalls, shotSeen]);
+  const myShotUsed = me && (shotCalls || []).some((s) => s.personId === me.id);
+  const fireShot = () => {
+    if (!me || myShotUsed) return;
+    setShotSeen(Date.now()); // don't pop my own takeover
+    actions.callShots(me.id, me.name);
+  };
+
   if (showSettings) {
     return <SettingsScreen settings={settings} amHost={amHost}
       onSave={(s) => { actions.saveSettings(s); setShowSettings(false); }}
@@ -334,6 +384,16 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   return (
     <div style={themedPage(settings)}>
       <style>{GLOBAL_CSS}</style>
+
+      {activeShot && (
+        <div style={styles.shotOverlay} onClick={() => setActiveShot(null)}>
+          <div style={styles.shotGlass}>🥃</div>
+          <div style={styles.shotName}>{activeShot.name} is calling</div>
+          <div style={styles.shotBig}>SHOTS!</div>
+          <div style={styles.shotSub}>Everyone grab one 🍻</div>
+          <button style={styles.shotDismiss} onClick={() => setActiveShot(null)}>I'm in — let's go</button>
+        </div>
+      )}
 
       {toast && (
         <div style={styles.toast} onClick={() => { openTab("chat"); setToast(null); }}>
@@ -357,7 +417,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
         </div>
       </header>
 
-      <LiveFeed people={people} now={liveNow} drinks={drinksMap} chat={chat} />
+      <LiveFeed people={people} now={liveNow} drinks={drinksMap} chat={chat} shotCalls={shotCalls} />
 
       {tab === "leaderboard" && (
         partyDrinks > 0 ? (
@@ -420,6 +480,12 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
 
       {tab === "chat" && (
         <ChatBox chat={chat} me={me} eventId={ev.event.id} onPost={(text, imageUrl) => me && actions.postChat(me.id, me.name, text, imageUrl)} onDelete={actions.deleteChat} now={liveNow} />
+      )}
+
+      {shotEnabled && me && (
+        <button style={{ ...styles.shotCallBtn, ...(myShotUsed ? styles.shotCallUsed : {}) }} onClick={fireShot} disabled={myShotUsed}>
+          {myShotUsed ? "🥃 You've used your shot call" : "🥃 Call shots! (everyone, once a night)"}
+        </button>
       )}
 
       {amHost ? (
@@ -509,16 +575,18 @@ function ShareModal({ joinCode, onClose }) {
 // ============================================================
 // LIVE FEED
 // ============================================================
-function LiveFeed({ people, now, drinks = DRINKS, chat = [] }) {
+function LiveFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [] }) {
   const events = [];
   people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name })));
-  chat.forEach((m) => events.push({ kind: "chat", t: m.t, name: m.name, text: m.text }));
+  chat.forEach((m) => events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl }));
+  shotCalls.forEach((s) => events.push({ kind: "shot", t: s.t, name: s.name }));
   events.sort((a, b) => b.t - a.t);
 
   const phrase = (e) => {
     const mins = Math.round((now - e.t) / 60000);
     const ago = mins < 1 ? "just now" : `${mins}m ago`;
-    if (e.kind === "chat") return { icon: "💬", text: `${e.name}: ${e.text}`, ago, chat: true };
+    if (e.kind === "shot") return { icon: "🥃", text: `${e.name} called shots!`, ago, chat: true };
+    if (e.kind === "chat") return { icon: e.imageUrl && !e.text ? "📷" : "💬", text: e.imageUrl && !e.text ? `${e.name} sent a photo` : `${e.name}: ${e.text}`, ago, chat: true };
     if (e.type === "vomit") return { icon: "🤮", text: `${e.name} had a rough moment`, ago };
     const d = drinks[e.type] || { emoji: "🍸", label: "drink" };
     const sz = POUR[e.pour || "M"].label;
@@ -793,10 +861,8 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
         </div>
       </div>
       <div style={{ position: "relative" }}>
-        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", touchAction: "none", display: "block" }}
-          onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); handleMove(e); }}
-          onPointerMove={(e) => { if (e.buttons === 1 || e.pointerType === "touch") handleMove(e); }}
-          onPointerUp={endScrub} onPointerCancel={endScrub} onPointerLeave={(e) => { if (e.buttons === 1) endScrub(); }}>
+        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", touchAction: "none", display: "block", cursor: "crosshair" }}>
+          <g style={{ pointerEvents: "none" }}>
           {[0, 0.25, 0.5, 0.75, 1].map((f, i) => { const gv = maxV * f; return (
             <g key={i}>
               <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
@@ -817,11 +883,16 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
             return <g key={s.person.id}><path d={path} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" opacity="0.9" />{last.v > 0 && <circle cx={x(last.t)} cy={y(last.v)} r="2.5" fill={s.color} />}</g>;
           })}
           {scrubT != null && (
-            <g>
+            <g style={{ pointerEvents: "none" }}>
               <line x1={x(scrubT)} y1={padT - 6} x2={x(scrubT)} y2={H - padB} stroke="#f3ead4" strokeWidth="1" strokeDasharray="3 3" opacity="0.8" />
               {series.map((s) => <circle key={s.person.id} cx={x(scrubT)} cy={y(valueAt(s.person, scrubT, metric))} r="3" fill={s.color} stroke="#15182a" strokeWidth="0.5" />)}
             </g>
           )}
+          </g>
+          <rect x="0" y="0" width={W} height={H} fill="transparent" style={{ touchAction: "none" }}
+            onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); handleMove(e); }}
+            onPointerMove={(e) => { if (e.buttons === 1 || e.pointerType === "touch") handleMove(e); }}
+            onPointerUp={endScrub} onPointerCancel={endScrub} />
         </svg>
         {scrubT != null && tip && (
           <div style={{ ...styles.tip, left: `${scrubFrac * 100}%`, transform: scrubFrac > 0.55 ? "translateX(-100%) translateX(-14px)" : "translateX(14px)" }}>
@@ -895,6 +966,58 @@ function ChatBox({ chat, me, eventId, onPost, onDelete, now }) {
 }
 
 // ============================================================
+// SUGGESTION BOX (everyone can submit; developer can read)
+// ============================================================
+function SuggestionBox() {
+  const [text, setText] = useState("");
+  const [sent, setSent] = useState(false);
+  const [showDev, setShowDev] = useState(false);
+  const [list, setList] = useState(null);
+  const myName = (typeof localStorage !== "undefined" && localStorage.getItem(LS_NAME)) || "anon";
+  const myPhone = (typeof localStorage !== "undefined" && localStorage.getItem(LS_PHONE)) || "";
+  const isDev = myPhone && myPhone === DEVELOPER_PHONE;
+
+  const submit = async () => {
+    const t = text.trim(); if (!t) return;
+    try { await postSuggestion({ name: myName, text: t }); setText(""); setSent(true); setTimeout(() => setSent(false), 2500); } catch (e) {}
+  };
+  const loadDev = async () => {
+    setShowDev(true);
+    try { setList(await fetchSuggestions()); } catch (e) { setList([]); }
+  };
+
+  return (
+    <div style={styles.settingBlock}>
+      <div style={styles.settingTitle}>💡 Suggest a feature</div>
+      <div style={styles.settingHint}>Got an idea to make Last Call better? Tell us — we actually read these.</div>
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <input style={{ ...styles.chatInput, flex: 1 }} placeholder="Your idea…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <button style={styles.chatSend} onClick={submit}>{sent ? "Thanks!" : "Send"}</button>
+      </div>
+      {isDev && (
+        <div style={{ marginTop: 12 }}>
+          {!showDev ? (
+            <button style={styles.linkBtn} onClick={loadDev}>▾ View all suggestions (developer)</button>
+          ) : (
+            <div>
+              <div style={{ ...styles.kicker, marginBottom: 6 }}>ALL SUGGESTIONS</div>
+              {list === null && <div style={styles.chatEmpty}>Loading…</div>}
+              {list && list.length === 0 && <div style={styles.chatEmpty}>None yet.</div>}
+              {list && list.map((s) => (
+                <div key={s.id} style={styles.suggestRow}>
+                  <div style={styles.suggestText}>{s.text}</div>
+                  <div style={styles.suggestMeta}>{s.name || "anon"} · {new Date(s.created_at).toLocaleDateString()}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // SETTINGS
 // ============================================================
 function SettingsScreen({ settings, amHost, onSave, onCancel }) {
@@ -905,6 +1028,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
   const [drinks, setDrinks] = useState(JSON.parse(JSON.stringify(init.drinks || DRINKS)));
   const [sizes, setSizes] = useState(JSON.parse(JSON.stringify(init.sizes || SIZES)));
   const [sexWeights, setSexWeights] = useState(JSON.parse(JSON.stringify(init.sexWeights || SIZES_BY_SEX)));
+  const [shotCallEnabled, setShotCallEnabled] = useState(init.shotCallEnabled === true);
   const setSexWeight = (sex, sz, v) => setSexWeights((w) => ({ ...w, [sex]: { ...w[sex], [sz]: v } }));
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState(DRINK_EMOJIS[0]);
@@ -920,7 +1044,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
     setDrinks((d) => ({ ...d, [key]: { label, emoji: newEmoji, alcG: Number(newAlc) || 14, custom: true } }));
     setNewName(""); setNewAlc(14);
   };
-  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights });
+  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights, shotCallEnabled });
 
   return (
     <div style={themedPage({ theme })}>
@@ -934,16 +1058,11 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
       <div style={styles.settingBlock}>
         <div style={styles.settingTitle}>How this works & drinking safely</div>
         <div style={styles.explainer}>
-          <p style={styles.explainerP}>Last Call estimates everyone's blood alcohol (BAC) using the <b>Widmark formula</b> — a standard method that combines how much alcohol you've had, your body weight, a difference in body-water between men and women, and how much time has passed (your body clears alcohol slowly over time, so BAC falls when you stop drinking).</p>
-          <p style={styles.explainerP}>Weight and gender matter because the same drink raises BAC more in a smaller person, and on average women reach a higher BAC than men of the same weight due to body composition. That's biology in the math, nothing more.</p>
-          <p style={styles.explainerP}>Honestly: this is a <b>rough estimate, not a real breathalyzer</b>. It can't see what you ate, how fast you drank, your medications, or how your body actually handles alcohol — it can easily be off. Use it for fun and rough awareness, never to decide if someone can drive. When in doubt, get a ride.</p>
-          <p style={styles.explainerP}><b>Drink water, look out for each other, and have fun.</b> 🥂</p>
+          <p style={styles.explainerP}>Last Call estimates everyone's blood alcohol (BAC) using the <b>Widmark formula</b> — a standard method that combines how much alcohol you've had, your body weight, a difference in body-water between men and women, and how much time has passed (your body clears alcohol slowly, so BAC falls when you stop drinking).</p>
+          <p style={styles.explainerP}>Smaller people and women tend to hit a higher BAC from the same drinks — that's just biology in the math.</p>
+          <p style={styles.explainerP}>It's an estimate, not a breathalyzer, so treat it as a fun gauge rather than gospel. Never use it to decide if someone can drive.</p>
+          <p style={styles.explainerP}>Drink water, look out for each other, and have fun. 🥂</p>
         </div>
-      </div>
-
-      <div style={styles.settingBlock}>
-        <div style={styles.settingTitle}>Share & code</div>
-        <div style={styles.confirmText}>Use the 📷 Share button on the main screen to show your join code and link.</div>
       </div>
 
       {amHost && (
@@ -1012,7 +1131,21 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
         </div>
       )}
 
+      {amHost && (
+        <div style={styles.settingBlock}>
+          <div style={styles.settingTitle}>Party extras</div>
+          <div style={styles.settingRow}>
+            <span style={styles.settingLabel}>🥃 Shot call</span>
+            <button style={{ ...styles.toggleBtn, ...(shotCallEnabled ? styles.toggleOn : {}) }} onClick={() => setShotCallEnabled(!shotCallEnabled)}>{shotCallEnabled ? "On" : "Off"}</button>
+          </div>
+          <div style={styles.settingHint}>When on, everyone gets one "Call shots!" blast per night — it takes over everyone's screen. Off by default.</div>
+        </div>
+      )}
+
       {amHost && <button style={styles.primaryBtn} onClick={save}>Save settings</button>}
+
+      <SuggestionBox />
+
       <button style={styles.reset} onClick={onCancel}>Cancel</button>
     </div>
   );

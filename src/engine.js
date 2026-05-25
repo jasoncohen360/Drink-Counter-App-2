@@ -19,8 +19,8 @@ export const SIZES = {
 
 // Sex-specific weight presets (host-only visibility). Falls back to SIZES.
 export const SIZES_BY_SEX = {
-  male:   { small: 150, medium: 180, tall: 210 },
-  female: { small: 125, medium: 150, tall: 175 },
+  male:   { small: 150, medium: 175, tall: 200 },
+  female: { small: 125, medium: 145, tall: 170 },
 };
 export function weightFor(size, sex) {
   const bySex = SIZES_BY_SEX[sex];

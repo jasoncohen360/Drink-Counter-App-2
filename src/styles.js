@@ -9,6 +9,9 @@ export const GLOBAL_CSS = `
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   button:active { transform: scale(0.97); }
   ::-webkit-scrollbar { width: 0; height: 0; }
+  @keyframes shotPop { 0% { transform: scale(0.3); opacity: 0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+  @keyframes shotShake { 0%,100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+  @keyframes shotBgPulse { 0%,100% { background: rgba(120,30,20,0.96); } 50% { background: rgba(160,50,30,0.96); } }
 `;
 
 export const styles = {
@@ -240,6 +243,19 @@ export const styles = {
   histRow: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(191,164,106,0.2)", borderRadius: 10, padding: "12px 14px", cursor: "pointer" },
   histName: { fontSize: 15, color: "#f3ead4" },
   histMeta: { fontSize: 11, color: "#9aa0b5", marginTop: 2 },
+  histRemove: { background: "none", border: "1px solid rgba(192,57,43,0.4)", color: "#d9533b", borderRadius: 8, fontSize: 13, cursor: "pointer", padding: "4px 9px", flexShrink: 0 },
+  suggestRow: { background: "rgba(0,0,0,0.2)", borderRadius: 8, padding: "8px 10px", marginBottom: 6 },
+  suggestText: { fontSize: 13, color: "#ece3d0", lineHeight: 1.4 },
+  suggestMeta: { fontSize: 10, color: "#6f758c", marginTop: 3 },
+
+  shotCallBtn: { background: "linear-gradient(100deg,#7a3b1e,#a8502e)", border: "1px solid rgba(255,180,120,0.5)", color: "#fff", borderRadius: 12, padding: "15px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: SERIF },
+  shotCallUsed: { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#9aa0b5", cursor: "default", fontWeight: 400 },
+  shotOverlay: { position: "fixed", inset: 0, zIndex: 100, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, cursor: "pointer", animation: "shotBgPulse 0.7s infinite", padding: 24, textAlign: "center" },
+  shotGlass: { fontSize: 96, animation: "shotShake 0.5s infinite", lineHeight: 1 },
+  shotName: { fontSize: 18, color: "rgba(255,255,255,0.9)", animation: "shotPop 0.4s ease both" },
+  shotBig: { fontFamily: SERIF, fontSize: 72, fontWeight: 700, color: "#fff", fontStyle: "italic", letterSpacing: 2, animation: "shotPop 0.5s ease both", textShadow: "0 4px 20px rgba(0,0,0,0.4)" },
+  shotSub: { fontSize: 18, color: "rgba(255,255,255,0.95)" },
+  shotDismiss: { marginTop: 18, background: "#fff", border: "none", color: "#7a3b1e", borderRadius: 99, padding: "14px 28px", fontSize: 16, fontWeight: 700, cursor: "pointer" },
 
   phoneNote: { fontSize: 11, color: "#6f758c", marginTop: -2, lineHeight: 1.5 },
   homeLink: { background: "none", border: "none", color: "#9aa0b5", fontSize: 12, cursor: "pointer", textDecoration: "underline", marginLeft: 8 },

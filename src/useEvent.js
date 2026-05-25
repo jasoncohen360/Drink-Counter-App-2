@@ -73,12 +73,38 @@ export async function joinEvent({ eventId, name, size, sex, weightLb, phone }) {
   return data;
 }
 
+// Permanently delete an event and everything in it (host only, by choice).
+export async function deleteEvent(eventId) {
+  // cascade deletes people/drink_log/chat via the foreign keys set up in the schema
+  const { error } = await supabase.from("events").delete().eq("id", eventId);
+  if (error) throw error;
+}
+
+// Remove just MY participation in an event (so it leaves my history) without
+// nuking the whole event for others. Deletes my person row from that event.
+export async function leaveEventHistory(personId) {
+  if (!personId) return;
+  const { error } = await supabase.from("people").delete().eq("id", personId);
+  if (error) throw error;
+}
+
+// ---- feature suggestions ----------------------------------
+export async function postSuggestion({ eventId, name, text }) {
+  const { error } = await supabase.from("suggestions").insert({ event_id: eventId || null, name: name || "anon", text });
+  if (error) throw error;
+}
+export async function fetchSuggestions() {
+  const { data, error } = await supabase.from("suggestions").select("*").order("created_at", { ascending: false }).limit(200);
+  if (error) throw error;
+  return data || [];
+}
+
 // Look up which events a phone number has been part of (event history).
 export async function eventsForPhone(phone) {
   if (!phone) return [];
   const { data, error } = await supabase
     .from("people")
-    .select("event_id, role, events!inner(id, name, join_code, phase, created_at, ended_at)")
+    .select("id, event_id, role, events!inner(id, name, join_code, phase, created_at, ended_at)")
     .eq("phone", phone)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -88,7 +114,7 @@ export async function eventsForPhone(phone) {
   for (const row of data || []) {
     if (seen.has(row.event_id)) continue;
     seen.add(row.event_id);
-    out.push({ ...row.events, myRole: row.role });
+    out.push({ ...row.events, myRole: row.role, personId: row.id });
   }
   return out;
 }
@@ -113,6 +139,7 @@ export function useEvent(eventId) {
   const [people, setPeople] = useState([]);
   const [logs, setLogs] = useState([]); // flat drink_log rows
   const [chat, setChat] = useState([]);
+  const [shotCalls, setShotCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -120,16 +147,18 @@ export function useEvent(eventId) {
   const reload = useCallback(async () => {
     if (!eventId) return;
     try {
-      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }] = await Promise.all([
+      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }] = await Promise.all([
         supabase.from("events").select("*").eq("id", eventId).single(),
         supabase.from("people").select("*").eq("event_id", eventId),
         supabase.from("drink_log").select("*").eq("event_id", eventId),
         supabase.from("chat").select("*").eq("event_id", eventId),
+        supabase.from("shot_calls").select("*").eq("event_id", eventId),
       ]);
       setEvent(ev || null);
       setPeople(ppl || []);
       setLogs(dl || []);
       setChat(ch || []);
+      setShotCalls(sc || []);
       setError(null);
     } catch (e) {
       setError(e.message || "Failed to load event");
@@ -151,6 +180,8 @@ export function useEvent(eventId) {
         () => supabase.from("drink_log").select("*").eq("event_id", eventId).then(({ data }) => data && setLogs(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "chat", filter: `event_id=eq.${eventId}` },
         () => supabase.from("chat").select("*").eq("event_id", eventId).then(({ data }) => data && setChat(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "shot_calls", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("shot_calls").select("*").eq("event_id", eventId).then(({ data }) => data && setShotCalls(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `id=eq.${eventId}` },
         () => supabase.from("events").select("*").eq("id", eventId).single().then(({ data }) => data && setEvent(data)))
       .subscribe();
@@ -176,6 +207,10 @@ export function useEvent(eventId) {
 
   const assembledChat = chat
     .map((c) => ({ id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, t: new Date(c.created_at).getTime() }))
+    .sort((a, b) => a.t - b.t);
+
+  const assembledShotCalls = shotCalls
+    .map((s) => ({ id: s.id, name: s.name, personId: s.person_id, t: new Date(s.created_at).getTime() }))
     .sort((a, b) => a.t - b.t);
 
   // ---- actions (optimistic-free; realtime brings the update back) ----
@@ -217,6 +252,9 @@ export function useEvent(eventId) {
     postChat: async (personId, name, text, imageUrl = null) => {
       await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text, image_url: imageUrl });
     },
+    callShots: async (personId, name) => {
+      await supabase.from("shot_calls").insert({ event_id: eventId, person_id: personId, name });
+    },
     deleteChat: async (chatId) => {
       await supabase.from("chat").delete().eq("id", chatId);
     },
@@ -237,6 +275,7 @@ export function useEvent(eventId) {
     event,
     people: assembledPeople,
     chat: assembledChat,
+    shotCalls: assembledShotCalls,
     settings: event?.settings || {},
     phase: event?.phase || "live",
     joinCode: event?.join_code || "",
