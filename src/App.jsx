@@ -371,8 +371,9 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const myShotUsed = me && (shotCalls || []).some((s) => s.personId === me.id);
   const fireShot = () => {
     if (!me || myShotUsed) return;
-    setShotSeen(Date.now()); // don't pop my own takeover
+    setShotSeen(Date.now()); // don't pop my own full takeover
     actions.callShots(me.id, me.name);
+    setToast({ name: "🥃 Shots called!", text: "everyone's screen is lighting up", t: Date.now(), personId: "self" });
   };
 
   if (showSettings) {
@@ -838,15 +839,22 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
 
   const tipData = scrubT != null ? series.map((s) => ({ name: s.person.name, color: s.color, v: valueAt(s.person, scrubT, metric) })) : null;
 
-  // Tap (or drag) anywhere on the chart to pick a moment. Uses the wrapper
-  // div's own geometry — simplest and most reliable on phones.
-  const wrapRef = useRef(null);
-  const selectFromClientX = (clientX) => {
-    const el = wrapRef.current; if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    setScrubT(t0 + frac * span);
+  // Restored from the original version that worked well: handlers directly on
+  // the SVG, mouse + touch, marker shows while dragging and clears on release.
+  const svgRef = useRef(null);
+  const pointerToTime = (clientX) => {
+    const svg = svgRef.current; if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    const px = ((clientX - rect.left) / rect.width) * W;
+    const clamped = Math.max(padL, Math.min(W - padR, px));
+    return t0 + ((clamped - padL) / (W - padL - padR)) * span;
   };
+  const handleMove = (e) => {
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const t = pointerToTime(clientX);
+    if (t != null) setScrubT(t);
+  };
+  const endScrub = () => setScrubT(null);
 
   return (
     <div style={styles.graphWrap}>
@@ -858,14 +866,10 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
           ))}
         </div>
       </div>
-      <div
-        ref={wrapRef}
-        style={{ position: "relative", cursor: "pointer", touchAction: "none" }}
-        onClick={(e) => selectFromClientX(e.clientX)}
-        onPointerMove={(e) => { if (e.buttons === 1) selectFromClientX(e.clientX); }}
-        onTouchMove={(e) => { if (e.touches[0]) selectFromClientX(e.touches[0].clientX); }}
-      >
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }}>
+      <div style={{ position: "relative" }}>
+        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", touchAction: "none", display: "block", cursor: "crosshair" }}
+          onMouseDown={handleMove} onMouseMove={(e) => e.buttons === 1 && handleMove(e)} onMouseUp={endScrub} onMouseLeave={endScrub}
+          onTouchStart={handleMove} onTouchMove={handleMove} onTouchEnd={endScrub}>
           {[0, 0.25, 0.5, 0.75, 1].map((f, i) => { const gv = maxV * f; return (
             <g key={i}>
               <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
@@ -887,30 +891,28 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
           })}
           {scrubT != null && (
             <g>
-              <line x1={x(scrubT)} y1={padT - 6} x2={x(scrubT)} y2={H - padB} stroke="#f3ead4" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.9" />
-              {series.map((s) => <circle key={s.person.id} cx={x(scrubT)} cy={y(valueAt(s.person, scrubT, metric))} r="3.5" fill={s.color} stroke="#15182a" strokeWidth="0.5" />)}
+              <line x1={x(scrubT)} y1={padT - 6} x2={x(scrubT)} y2={H - padB} stroke="#f3ead4" strokeWidth="1" strokeDasharray="3 3" opacity="0.8" />
+              {series.map((s) => <circle key={s.person.id} cx={x(scrubT)} cy={y(valueAt(s.person, scrubT, metric))} r="3" fill={s.color} stroke="#15182a" strokeWidth="0.5" />)}
             </g>
           )}
         </svg>
+        {scrubT != null && tipData && (
+          <div style={styles.scrubPanel}>
+            <div style={styles.scrubPanelHead}>
+              <span>📍 {fmtTime(scrubT)}</span>
+            </div>
+            {[...tipData].sort((a, b) => b.v - a.v).map((r) => (
+              <div key={r.name} style={styles.tipRow}>
+                <span style={{ ...styles.legendDot, background: r.color }} />
+                <span style={styles.tipName}>{r.name}</span>
+                <span style={styles.tipVal}>{fmtVal(r.v)} {metric === "bac" ? "BAC" : "drinks"}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div style={styles.legend}>{series.map((s) => <span key={s.person.id} style={styles.legendItem}><span style={{ ...styles.legendDot, background: s.color }} />{s.person.name}</span>)}</div>
-      {scrubT != null && tipData ? (
-        <div style={styles.scrubPanel}>
-          <div style={styles.scrubPanelHead}>
-            <span>📍 At {fmtTime(scrubT)}</span>
-            <button style={styles.scrubClear} onClick={() => setScrubT(null)}>clear</button>
-          </div>
-          {[...tipData].sort((a, b) => b.v - a.v).map((r) => (
-            <div key={r.name} style={styles.tipRow}>
-              <span style={{ ...styles.legendDot, background: r.color }} />
-              <span style={styles.tipName}>{r.name}</span>
-              <span style={styles.tipVal}>{fmtVal(r.v)} {metric === "bac" ? "BAC" : "drinks"}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div style={styles.scrubHint}>Tap anywhere on the chart to see that moment's stats</div>
-      )}
+      <div style={styles.scrubHint}>{scrubT != null ? `${metric === "bac" ? "BAC" : "Drinks"} at ${fmtTime(scrubT)}` : "Press and drag across the chart to rewind the night"}</div>
     </div>
   );
 }

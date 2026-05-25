@@ -140,6 +140,7 @@ export function useEvent(eventId) {
   const [logs, setLogs] = useState([]); // flat drink_log rows
   const [chat, setChat] = useState([]);
   const [shotCalls, setShotCalls] = useState([]);
+  const [pendingLogs, setPendingLogs] = useState([]); // optimistic drinks shown instantly
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -169,6 +170,18 @@ export function useEvent(eventId) {
 
   useEffect(() => { reload(); }, [reload]);
 
+  // When real logs arrive, drop optimistic entries that have now landed
+  // (matched by person + type within a few seconds), and expire stale ones.
+  useEffect(() => {
+    if (pendingLogs.length === 0) return;
+    const now = Date.now();
+    setPendingLogs((pend) => pend.filter((pl) => {
+      if (now - pl._localT > 8000) return false; // safety expire
+      const landed = logs.some((l) => l.person_id === pl.person_id && l.type === pl.type && Math.abs(new Date(l.t).getTime() - pl._localT) < 8000);
+      return !landed;
+    }));
+  }, [logs]);
+
   // realtime subscriptions — any change on any device refreshes the relevant slice
   useEffect(() => {
     if (!eventId) return;
@@ -191,19 +204,24 @@ export function useEvent(eventId) {
   // ---- assemble into the shape the UI expects ----
   // Each person gets a `log` array of { type, pour, t } sorted by time,
   // exactly like the artifact used, so the UI/engine code is unchanged.
-  const assembledPeople = people.map((p) => ({
-    id: p.id,
-    name: p.name,
-    phone: p.phone,
-    size: p.size,
-    sex: p.sex,
-    weightLb: p.weight_lb,
-    role: p.role,
-    log: logs
+  const assembledPeople = people.map((p) => {
+    const realLogs = logs
       .filter((l) => l.person_id === p.id)
-      .map((l) => ({ type: l.type, pour: l.pour, t: new Date(l.t).getTime(), _id: l.id }))
-      .sort((a, b) => a.t - b.t),
-  }));
+      .map((l) => ({ type: l.type, pour: l.pour, t: new Date(l.t).getTime(), _id: l.id }));
+    const myPending = pendingLogs
+      .filter((pl) => pl.person_id === p.id)
+      .map((pl) => ({ type: pl.type, pour: pl.pour, t: pl._localT, _id: pl._id, _pending: true }));
+    return {
+      id: p.id,
+      name: p.name,
+      phone: p.phone,
+      size: p.size,
+      sex: p.sex,
+      weightLb: p.weight_lb,
+      role: p.role,
+      log: [...realLogs, ...myPending].sort((a, b) => a.t - b.t),
+    };
+  });
 
   const assembledChat = chat
     .map((c) => ({ id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, t: new Date(c.created_at).getTime() }))
@@ -216,22 +234,35 @@ export function useEvent(eventId) {
   // ---- actions (optimistic-free; realtime brings the update back) ----
   const actions = {
     addDrink: async (personId, type) => {
+      const localId = "pending_" + Math.random().toString(36).slice(2);
+      setPendingLogs((pend) => [...pend, { _id: localId, _localT: Date.now(), person_id: personId, type, pour: "M" }]);
       await supabase.from("drink_log").insert({ person_id: personId, event_id: eventId, type, pour: "M" });
     },
     addVomit: async (personId) => {
+      const localId = "pending_" + Math.random().toString(36).slice(2);
+      setPendingLogs((pend) => [...pend, { _id: localId, _localT: Date.now(), person_id: personId, type: "vomit", pour: "M" }]);
       await supabase.from("drink_log").insert({ person_id: personId, event_id: eventId, type: "vomit", pour: "M" });
     },
     setPour: async (logId, pour) => {
+      if (String(logId).startsWith("pending_")) return;
       await supabase.from("drink_log").update({ pour }).eq("id", logId);
     },
     setDrinkType: async (logId, type) => {
+      if (String(logId).startsWith("pending_")) return;
       await supabase.from("drink_log").update({ type }).eq("id", logId);
     },
     deleteEntry: async (logId) => {
+      if (String(logId).startsWith("pending_")) { setPendingLogs((pend) => pend.filter((p) => p._id !== logId)); return; }
       await supabase.from("drink_log").delete().eq("id", logId);
     },
     undoLast: async (personId) => {
-      // delete this person's most recent log row
+      // if there's an unsent optimistic entry for this person, just drop the newest one
+      const minePending = pendingLogs.filter((p) => p.person_id === personId);
+      if (minePending.length > 0) {
+        const newest = minePending.reduce((a, b) => (b._localT > a._localT ? b : a));
+        setPendingLogs((pend) => pend.filter((p) => p._id !== newest._id));
+        return;
+      }
       const mine = logs.filter((l) => l.person_id === personId).sort((a, b) => new Date(b.t) - new Date(a.t));
       if (mine[0]) await supabase.from("drink_log").delete().eq("id", mine[0].id);
     },
