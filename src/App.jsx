@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone } from "./useEvent.js";
 import {
-  DRINKS, DRINK_EMOJIS, SIZES, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
+  DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
   peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, valueAt, LINE_COLORS,
 } from "./engine.js";
+import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto } from "./useEvent.js";
 import { styles, GLOBAL_CSS, SERIF } from "./styles.js";
 
 // localStorage keys — remember who you are + which event you're in, on THIS device
@@ -71,11 +71,12 @@ function FrontDoor({ onEnter }) {
         <h1 style={styles.bigTitle}>Last Call</h1>
         <p style={styles.setupSub}>Host a party, or join one with a code.</p>
 
-        <label style={styles.fieldLabel}>Your phone number</label>
-        <input style={styles.inputBig} placeholder="(so we can remember your events)" value={phone}
-          onChange={(e) => { setPhone(e.target.value); }} inputMode="tel" />
         <label style={styles.fieldLabel}>Your name</label>
         <input style={styles.inputBig} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+        <label style={styles.fieldLabel}>Phone number (optional)</label>
+        <input style={styles.inputBig} placeholder="Only to remember your events over time" value={phone}
+          onChange={(e) => { setPhone(e.target.value); }} inputMode="tel" />
+        <div style={styles.phoneNote}>Optional — we use it only to show your past events next time. No texts, ever.</div>
 
         <button style={styles.primaryBtn} onClick={() => { remember(); setMode("create"); }}>Host a new party →</button>
         <button style={styles.ghostBtn} onClick={() => { remember(); setMode("join"); }}>Join with a code</button>
@@ -117,7 +118,7 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
     setBusy(true); setErr("");
     try {
       const { eventId, hostPersonId } = await createEvent({
-        eventName: evName, hostName: name, size, sex, weightLb: SIZES[size].weightLb,
+        eventName: evName, hostName: name, size, sex, weightLb: weightFor(size, sex),
         settings: defaultSettings(), hostPhone: phone,
       });
       onCreated(eventId, hostPersonId);
@@ -174,7 +175,7 @@ function JoinScreen({ phone, name, setName, onBack, onJoined }) {
     try {
       const ev = await findEventByCode(code);
       if (!ev) { setErr("No party found with that code. Double-check it?"); setBusy(false); return; }
-      const person = await joinEvent({ eventId: ev.id, name, size, sex, weightLb: SIZES[size].weightLb, phone });
+      const person = await joinEvent({ eventId: ev.id, name, size, sex, weightLb: weightFor(size, sex), phone });
       onJoined(ev.id, person.id);
     } catch (e) {
       setErr(e.message || "Could not join."); setBusy(false);
@@ -271,6 +272,22 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [chatSeen, setChatSeen] = useState(Date.now());
+  const [toast, setToast] = useState(null);
+  const lastChatRef = useRef(chat.length);
+
+  // pop a toast when a new chat arrives from someone else
+  useEffect(() => {
+    if (chat.length > lastChatRef.current) {
+      const newest = chat[chat.length - 1];
+      if (newest && (!me || newest.personId !== me.id)) {
+        setToast(newest);
+        const id = setTimeout(() => setToast(null), 4000);
+        lastChatRef.current = chat.length;
+        return () => clearTimeout(id);
+      }
+    }
+    lastChatRef.current = chat.length;
+  }, [chat, me]);
 
   const me = people.find((p) => p.id === myPersonId);
   const amHost = me?.role === "host";
@@ -288,6 +305,13 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     <div style={themedPage(settings)}>
       <style>{GLOBAL_CSS}</style>
 
+      {toast && (
+        <div style={styles.toast} onClick={() => { openTab("chat"); setToast(null); }}>
+          <span style={styles.toastIcon}>💬</span>
+          <span style={styles.toastText}><b>{toast.name}:</b> {toast.text || (toast.imageUrl ? "📷 photo" : "")}</span>
+        </div>
+      )}
+
       <header style={styles.liveHeader}>
         <div style={styles.headerRow}>
           <button style={styles.gearBtn} onClick={() => setShowSettings(true)}>⚙ Settings</button>
@@ -295,10 +319,11 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
             <span style={styles.themeMotif}>{theme.motif}</span>
             <span style={styles.kicker}>{eventName.toUpperCase()}</span>
           </div>
-          <button style={styles.gearBtn} onClick={() => setShowShare(true)}>📷 Share</button>
+          <button style={styles.gearBtn} onClick={() => setShowShare(true)}>✉️ Invite</button>
         </div>
         <div style={styles.liveStat}>
           <b>{partyDrinks}</b> drinks · <b>{people.length}</b> people · code <b>{joinCode}</b>
+          <button style={styles.homeLink} onClick={onLeave}>⌂ leave</button>
         </div>
       </header>
 
@@ -312,7 +337,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
             <FavoriteDrinksChart people={people} drinks={drinksMap} />
             <TimelineGraph people={people} now={liveNow} metric={metric} setMetric={setMetric} legalLimit={legalLimit} />
           </>
-        ) : <div style={styles.emptyState}>No drinks yet. Head to <b>Mine</b> to start logging.</div>
+        ) : <div style={styles.emptyState}>No drinks yet. Head to <b>My Drinks</b> to start logging.</div>
       )}
 
       {tab === "mydrinks" && (
@@ -320,16 +345,17 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
           {me && (
             <PersonCard p={me} now={liveNow} drinks={drinksMap} sizes={sizesMap}
               expanded={expandedId === me.id} toggleExpand={() => setExpandedId(expandedId === me.id ? null : me.id)}
-              onEdit={() => setEditingId(me.id)} actions={actions} setConfirmVomitId={setConfirmVomitId} />
+              onEdit={() => setEditingId(me.id)} actions={actions} setConfirmVomitId={setConfirmVomitId}
+              canLog />
           )}
-          {people.filter((p) => p.id !== myPersonId).length > 0 && (
+          {amHost && people.filter((p) => p.id !== myPersonId).length > 0 && (
             <div style={styles.quickWrap}>
-              <div style={styles.quickTitle}>Quick-add for others</div>
+              <div style={styles.quickTitle}>Quick-add for others (host)</div>
               {people.filter((p) => p.id !== myPersonId).map((p) => {
                 if (expandedId === p.id) {
                   return <PersonCard key={p.id} p={p} now={liveNow} drinks={drinksMap} sizes={sizesMap}
                     expanded toggleExpand={() => setExpandedId(null)} onEdit={() => setEditingId(p.id)}
-                    actions={actions} setConfirmVomitId={setConfirmVomitId} />;
+                    actions={actions} setConfirmVomitId={setConfirmVomitId} canLog />;
                 }
                 const count = drinkCountAtTime(p, liveNow);
                 const bac = count ? bacAtTime(p, liveNow, drinksMap) : 0;
@@ -352,15 +378,18 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
               })}
             </div>
           )}
-          {adding ? (
+          {!amHost && (
+            <div style={styles.guestNote}>Only the host can log drinks for other people. You can log your own above, and see everyone on the Leaderboard.</div>
+          )}
+          {amHost && (adding ? (
             <PersonForm sizes={sizesMap} onCancel={() => setAdding(false)}
-              onSave={(name, size, sex) => { actions.addPerson({ name, size, sex, weightLb: sizesMap[size].weightLb }); setAdding(false); }} />
-          ) : <button style={styles.addPerson} onClick={() => setAdding(true)}>+ Add someone</button>}
+              onSave={(name, size, sex) => { actions.addPerson({ name, size, sex, weightLb: weightFor(size, sex) }); setAdding(false); }} />
+          ) : <button style={styles.addPerson} onClick={() => setAdding(true)}>+ Add someone</button>)}
         </>
       )}
 
       {tab === "chat" && (
-        <ChatBox chat={chat} me={me} onPost={(text) => me && actions.postChat(me.id, me.name, text)} onDelete={actions.deleteChat} now={liveNow} />
+        <ChatBox chat={chat} me={me} eventId={ev.event.id} onPost={(text, imageUrl) => me && actions.postChat(me.id, me.name, text, imageUrl)} onDelete={actions.deleteChat} now={liveNow} />
       )}
 
       {amHost ? (
@@ -401,7 +430,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
 
       <div style={styles.tabBarFixed}>
         <div style={styles.tabBarInner}>
-          {[{ key: "leaderboard", icon: "🏆", name: "Board" }, { key: "mydrinks", icon: "🍸", name: "Mine" }, { key: "chat", icon: "💬", name: "Chat" }].map((t) => (
+          {[{ key: "leaderboard", icon: "🏆", name: "Leaderboard" }, { key: "mydrinks", icon: "🍸", name: "My Drinks" }, { key: "chat", icon: "💬", name: "Chat" }].map((t) => (
             <button key={t.key} style={{ ...styles.tab, ...(tab === t.key ? { ...styles.tabOn, borderColor: theme.accent, color: theme.accent } : {}) }} onClick={() => openTab(t.key)}>
               <span style={styles.tabIcon}>{t.icon}</span>
               <span style={styles.tabName}>{t.name}</span>
@@ -435,12 +464,12 @@ function ShareModal({ joinCode, onClose }) {
     <div style={styles.modalBg} onClick={onClose}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.modalTitle}>Invite people</div>
-        <p style={styles.confirmText}>Share the code, or send the link. Anyone can join from their own phone.</p>
+        <p style={styles.confirmText}>Share the code or the link — anyone can join from their own phone.</p>
         <div style={styles.codeBox}>{joinCode}</div>
         <div style={styles.shareRow}>
-          <button style={styles.saveBtn} onClick={copy}>{copied ? "Copied!" : "Copy link"}</button>
+          <button style={styles.saveBtn} onClick={copy}>{copied ? "Copied!" : "Copy invite link"}</button>
         </div>
-        <p style={styles.chatNote}>Tip: in a loud room, just tell people the code and "go to the Last Call link." QR code can be added later.</p>
+        <p style={styles.chatNote}>In a loud room, just tell people the code and "open the Last Call link." (QR code coming later.)</p>
         <div style={styles.formActions}><button style={styles.cancelBtn} onClick={onClose}>Done</button></div>
       </div>
     </div>
@@ -455,7 +484,6 @@ function LiveFeed({ people, now, drinks = DRINKS, chat = [] }) {
   people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name })));
   chat.forEach((m) => events.push({ kind: "chat", t: m.t, name: m.name, text: m.text }));
   events.sort((a, b) => b.t - a.t);
-  const latestChat = chat.length ? [...chat].sort((a, b) => b.t - a.t)[0] : null;
 
   const phrase = (e) => {
     const mins = Math.round((now - e.t) / 60000);
@@ -470,12 +498,6 @@ function LiveFeed({ people, now, drinks = DRINKS, chat = [] }) {
   return (
     <div style={styles.feedV}>
       <div style={styles.feedVHead}><span style={styles.feedDot} /><span style={styles.feedVTitle}>LIVE FEED</span></div>
-      {latestChat && (
-        <div style={styles.feedChatPreview}>
-          <span style={styles.feedChatIcon}>💬</span>
-          <span style={styles.feedChatPrevText}><b>{latestChat.name}:</b> {latestChat.text}</span>
-        </div>
-      )}
       {events.length === 0 ? (
         <div style={styles.feedVEmpty}>Log a drink or say something to start the night…</div>
       ) : (
@@ -573,7 +595,7 @@ function FavoriteDrinksChart({ people, drinks = DRINKS }) {
 // ============================================================
 // PERSON CARD + INDIVIDUAL STATS
 // ============================================================
-function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleExpand, onEdit, actions, setConfirmVomitId }) {
+function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleExpand, onEdit, actions, setConfirmVomitId, canLog = false }) {
   const count = drinkCountAtTime(p, now);
   const bac = count ? bacAtTime(p, now, drinks) : 0;
   const desc = bacDescriptor(bac);
@@ -607,23 +629,25 @@ function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleEx
         <span style={styles.bigCount}>{count}</span>
         <span style={styles.countLabel}>drink{count === 1 ? "" : "s"}</span>
         {count > 0 && <span style={styles.paceChip}>{pace.toFixed(1)}/hr</span>}
-        <button style={styles.vomitMini} onClick={() => setConfirmVomitId(p.id)} title="Log a vomit">🤮</button>
-        {p.log.length > 0 && <button style={styles.undo} onClick={() => actions.undoLast(p.id)}>↶</button>}
+        {canLog && <button style={styles.vomitMini} onClick={() => setConfirmVomitId(p.id)} title="Log a vomit">🤮</button>}
+        {canLog && p.log.length > 0 && <button style={styles.undo} onClick={() => actions.undoLast(p.id)}>↶</button>}
       </div>
       {count > 0 && <div style={styles.tallyRow}>{Object.entries(tally).map(([t, n]) => <span key={t}>{dd(t).emoji} {n}</span>)}</div>}
-      <div style={styles.drinkBtns}>
-        {Object.entries(drinks).map(([key, d]) => (
-          <button key={key} style={styles.drinkBtn} onClick={() => actions.addDrink(p.id, key)}>
-            <span style={styles.drinkEmoji}>{d.emoji}</span><span style={styles.drinkLabel}>{d.label}</span>
-          </button>
-        ))}
-      </div>
-      {expanded && <IndividualStats p={p} now={now} drinks={drinks} actions={actions} />}
+      {canLog && (
+        <div style={styles.drinkBtns}>
+          {Object.entries(drinks).map(([key, d]) => (
+            <button key={key} style={styles.drinkBtn} onClick={() => actions.addDrink(p.id, key)}>
+              <span style={styles.drinkEmoji}>{d.emoji}</span><span style={styles.drinkLabel}>{d.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {expanded && <IndividualStats p={p} now={now} drinks={drinks} actions={actions} canEdit={canLog} />}
     </div>
   );
 }
 
-function IndividualStats({ p, now, drinks = DRINKS, actions }) {
+function IndividualStats({ p, now, drinks = DRINKS, actions, canEdit = false }) {
   const peak = peakBAC(p, now, drinks);
   const fav = favoriteDrink(p);
   const dd = (k) => drinks[k] || DRINKS[k] || { emoji: "🍸", label: "drink" };
@@ -651,7 +675,7 @@ function IndividualStats({ p, now, drinks = DRINKS, actions }) {
               if (e.type === "vomit") return (
                 <div key={e._id} style={styles.logEntry}>
                   <span style={styles.logTime}>{time}</span><span style={styles.logVomit}>🤮 vomit</span>
-                  <button style={{ ...styles.logDelete, marginLeft: "auto" }} onClick={() => actions.deleteEntry(e._id)}>✕</button>
+                  {canEdit && <button style={{ ...styles.logDelete, marginLeft: "auto" }} onClick={() => actions.deleteEntry(e._id)}>✕</button>}
                 </div>
               );
               const isEditing = editT === e._id;
@@ -661,10 +685,10 @@ function IndividualStats({ p, now, drinks = DRINKS, actions }) {
                     <span style={styles.logTime}>{time}</span>
                     <span style={styles.logType}>{dd(e.type).emoji} {dd(e.type).label}</span>
                     <span style={styles.logSizeBadge}>{POUR[e.pour || DEFAULT_POUR].label}</span>
-                    <button style={styles.logEditBtn} onClick={() => setEditT(isEditing ? null : e._id)}>{isEditing ? "done" : "edit"}</button>
-                    <button style={styles.logDelete} onClick={() => actions.deleteEntry(e._id)}>✕</button>
+                    {canEdit && <button style={styles.logEditBtn} onClick={() => setEditT(isEditing ? null : e._id)}>{isEditing ? "done" : "edit"}</button>}
+                    {canEdit && <button style={styles.logDelete} onClick={() => actions.deleteEntry(e._id)}>✕</button>}
                   </div>
-                  {isEditing && (
+                  {isEditing && canEdit && (
                     <div style={styles.logControls}>
                       <div style={styles.logChipRow}>
                         {Object.entries(drinks).map(([k, d]) => (
@@ -700,7 +724,7 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
   const allTs = people.flatMap((p) => p.log.map((d) => d.t));
   if (allTs.length === 0) return null;
   const t0 = Math.min(...allTs);
-  const t1 = Math.max(now, t0 + 600000);
+  const t1 = Math.max(now, t0 + 120000); // grow from a 2-min floor, not 10
   const span = t1 - t0;
   const STEPS = 40;
   const sampleTimes = Array.from({ length: STEPS + 1 }, (_, i) => t0 + (span * i) / STEPS);
@@ -724,7 +748,7 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
     const clamped = Math.max(padL, Math.min(W - padR, px));
     return t0 + ((clamped - padL) / (W - padL - padR)) * span;
   };
-  const handleMove = (e) => { const cx = e.touches ? e.touches[0].clientX : e.clientX; const t = pointerToTime(cx); if (t != null) { setScrubT(t); setScrubFrac(Math.max(0, Math.min(1, (t - t0) / span))); } };
+  const handleMove = (e) => { const cx = e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX); if (cx == null) return; const t = pointerToTime(cx); if (t != null) { setScrubT(t); setScrubFrac(Math.max(0, Math.min(1, (t - t0) / span))); } };
   const endScrub = () => setScrubT(null);
   const tip = scrubT != null ? series.map((s) => ({ name: s.person.name, color: s.color, v: valueAt(s.person, scrubT, metric) })) : null;
 
@@ -740,8 +764,9 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
       </div>
       <div style={{ position: "relative" }}>
         <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", touchAction: "none", display: "block" }}
-          onMouseDown={handleMove} onMouseMove={(e) => e.buttons === 1 && handleMove(e)} onMouseUp={endScrub} onMouseLeave={endScrub}
-          onTouchStart={handleMove} onTouchMove={handleMove} onTouchEnd={endScrub}>
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); handleMove(e); }}
+          onPointerMove={(e) => { if (e.buttons === 1 || e.pointerType === "touch") handleMove(e); }}
+          onPointerUp={endScrub} onPointerCancel={endScrub} onPointerLeave={(e) => { if (e.buttons === 1) endScrub(); }}>
           {[0, 0.25, 0.5, 0.75, 1].map((f, i) => { const gv = maxV * f; return (
             <g key={i}>
               <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
@@ -784,30 +809,57 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
 // ============================================================
 // CHAT
 // ============================================================
-function ChatBox({ chat, me, onPost, onDelete, now }) {
+function ChatBox({ chat, me, eventId, onPost, onDelete, now }) {
   const [text, setText] = useState("");
-  const send = () => { const t = text.trim(); if (!t || !me) return; onPost(t); setText(""); };
-  const ago = (t) => { const m = Math.round((now - t) / 60000); return m < 1 ? "now" : `${m}m`; };
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [chat.length]);
+
+  const send = () => { const t = text.trim(); if (!t || !me) return; onPost(t, null); setText(""); };
+  const pickPhoto = () => fileRef.current?.click();
+  const onPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !me) return;
+    setUploading(true);
+    try {
+      const url = await uploadChatPhoto(eventId, file);
+      onPost(text.trim() || "", url);
+      setText("");
+    } catch (err) {
+      alert("Photo upload failed. Make sure photo storage is set up (see deploy notes). " + (err.message || ""));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+  const timeStr = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
   return (
     <div style={styles.chatWrap}>
-      <div style={styles.chatTitle}>💬 Trash Talk</div>
-      <div style={styles.chatList}>
-        {chat.length === 0 && <div style={styles.chatEmpty}>No messages yet. Start something.</div>}
-        {[...chat].sort((a, b) => a.t - b.t).map((m) => (
-          <div key={m.id} style={styles.chatMsg}>
-            <span style={styles.chatAuthor}>{m.name}</span>
-            <span style={styles.chatText}>{m.text}</span>
-            <span style={styles.chatTime}>{ago(m.t)}</span>
-            <button style={styles.chatDel} onClick={() => onDelete(m.id)}>✕</button>
-          </div>
-        ))}
+      <div style={styles.chatList} ref={listRef}>
+        {chat.length === 0 && <div style={styles.chatEmpty}>No messages yet. Say hi 👋</div>}
+        {[...chat].sort((a, b) => a.t - b.t).map((m) => {
+          const mine = me && m.personId === me.id;
+          return (
+            <div key={m.id} style={{ ...styles.bubbleRow, justifyContent: mine ? "flex-end" : "flex-start" }}>
+              <div style={{ ...styles.bubble, ...(mine ? styles.bubbleMine : styles.bubbleTheirs) }}>
+                {!mine && <div style={styles.bubbleName}>{m.name}</div>}
+                {m.imageUrl && <img src={m.imageUrl} alt="" style={styles.bubbleImg} />}
+                {m.text && <div style={styles.bubbleText}>{m.text}</div>}
+                <div style={styles.bubbleTime}>{timeStr(m.t)}{mine && <button style={styles.bubbleDel} onClick={() => onDelete(m.id)}>delete</button>}</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
       <div style={styles.chatInputRow}>
-        <span style={styles.chatAsYou}>{me?.name}:</span>
-        <input style={styles.chatInput} placeholder="say something…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
-        <button style={styles.chatSend} onClick={send}>Post</button>
+        <button style={styles.photoBtn} onClick={pickPhoto} disabled={uploading} title="Add photo">{uploading ? "…" : "📷"}</button>
+        <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onPhoto} />
+        <input style={styles.chatInput} placeholder="Message…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
+        <button style={styles.chatSend} onClick={send}>Send</button>
       </div>
-      <div style={styles.chatNote}>Posting as you. Everyone sees this across their phones, live.</div>
     </div>
   );
 }
@@ -822,6 +874,8 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
   const [theme, setTheme] = useState(init.theme || "midnight");
   const [drinks, setDrinks] = useState(JSON.parse(JSON.stringify(init.drinks || DRINKS)));
   const [sizes, setSizes] = useState(JSON.parse(JSON.stringify(init.sizes || SIZES)));
+  const [sexWeights, setSexWeights] = useState(JSON.parse(JSON.stringify(init.sexWeights || SIZES_BY_SEX)));
+  const setSexWeight = (sex, sz, v) => setSexWeights((w) => ({ ...w, [sex]: { ...w[sex], [sz]: v } }));
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState(DRINK_EMOJIS[0]);
   const [newAlc, setNewAlc] = useState(14);
@@ -836,7 +890,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
     setDrinks((d) => ({ ...d, [key]: { label, emoji: newEmoji, alcG: Number(newAlc) || 14, custom: true } }));
     setNewName(""); setNewAlc(14);
   };
-  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes });
+  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights });
 
   return (
     <div style={themedPage({ theme })}>
@@ -845,63 +899,88 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
         <div style={styles.headerRow}><button style={styles.gearBtn} onClick={onCancel}>‹ Back</button><div style={styles.kicker}>SETTINGS</div><span style={{ width: 60 }} /></div>
       </header>
 
-      {!amHost && <div style={styles.settingBlock}><div style={styles.confirmText}>Only the host can change event settings. You can look, but Save is hidden.</div></div>}
+      {!amHost && <div style={styles.settingBlock}><div style={styles.confirmText}>Only the host can change event settings (theme, drinks, limits). You can read everything here.</div></div>}
+
+      <div style={styles.settingBlock}>
+        <div style={styles.settingTitle}>How this works & drinking safely</div>
+        <div style={styles.explainer}>
+          <p style={styles.explainerP}>Last Call estimates everyone's blood alcohol (BAC) using the <b>Widmark formula</b> — a standard method that combines how much alcohol you've had, your body weight, a difference in body-water between men and women, and how much time has passed (your body clears alcohol slowly over time, so BAC falls when you stop drinking).</p>
+          <p style={styles.explainerP}>Weight and gender matter because the same drink raises BAC more in a smaller person, and on average women reach a higher BAC than men of the same weight due to body composition. That's biology in the math, nothing more.</p>
+          <p style={styles.explainerP}>Honestly: this is a <b>rough estimate, not a real breathalyzer</b>. It can't see what you ate, how fast you drank, your medications, or how your body actually handles alcohol — it can easily be off. Use it for fun and rough awareness, never to decide if someone can drive. When in doubt, get a ride.</p>
+          <p style={styles.explainerP}><b>Drink water, look out for each other, and have fun.</b> 🥂</p>
+        </div>
+      </div>
 
       <div style={styles.settingBlock}>
         <div style={styles.settingTitle}>Share & code</div>
         <div style={styles.confirmText}>Use the 📷 Share button on the main screen to show your join code and link.</div>
       </div>
 
-      <div style={styles.settingBlock}>
-        <div style={styles.settingTitle}>Legal limit</div>
-        <div style={styles.settingRow}><span style={styles.settingLabel}>State</span>
-          <select style={styles.select} value={stateCode} onChange={(e) => pickState(e.target.value)}>{Object.keys(STATES).map((c) => <option key={c} value={c}>{c}</option>)}</select>
+      {amHost && (
+        <div style={styles.settingBlock}>
+          <div style={styles.settingTitle}>Legal limit</div>
+          <div style={styles.settingRow}><span style={styles.settingLabel}>State</span>
+            <select style={styles.select} value={stateCode} onChange={(e) => pickState(e.target.value)}>{Object.keys(STATES).map((c) => <option key={c} value={c}>{c}</option>)}</select>
+          </div>
+          <div style={styles.settingRow}><span style={styles.settingLabel}>BAC limit</span>
+            <input style={styles.numInput} type="number" step="0.01" value={limit} onChange={(e) => setLimit(e.target.value)} />
+          </div>
         </div>
-        <div style={styles.settingRow}><span style={styles.settingLabel}>BAC limit</span>
-          <input style={styles.numInput} type="number" step="0.01" value={limit} onChange={(e) => setLimit(e.target.value)} />
-        </div>
-      </div>
+      )}
 
-      <div style={styles.settingBlock}>
-        <div style={styles.settingTitle}>Theme</div>
-        <div style={styles.themeGrid}>
-          {Object.entries(THEMES).map(([k, th]) => (
-            <button key={k} style={{ ...styles.themeChip, background: th.pageBg, border: theme === k ? `2px solid ${th.accent}` : "1px solid rgba(255,255,255,0.15)" }} onClick={() => setTheme(k)}>
-              <span style={{ color: th.text }}>{th.motif} {th.label}</span>
-            </button>
+      {amHost && (
+        <div style={styles.settingBlock}>
+          <div style={styles.settingTitle}>Theme</div>
+          <div style={styles.themeGrid}>
+            {Object.entries(THEMES).map(([k, th]) => (
+              <button key={k} style={{ ...styles.themeChip, background: th.pageBg, border: theme === k ? `2px solid ${th.accent}` : "1px solid rgba(255,255,255,0.15)" }} onClick={() => setTheme(k)}>
+                <span style={{ color: th.text }}>{th.motif} {th.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {amHost && (
+        <div style={styles.settingBlock}>
+          <div style={styles.settingTitle}>Drinks & alcohol weighting (grams)</div>
+          {Object.entries(drinks).map(([k, d]) => (
+            <div key={k} style={styles.settingRow}>
+              <span style={styles.settingLabel}>{d.emoji} {d.label}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input style={styles.numInput} type="number" step="1" value={d.alcG} onChange={(e) => setDrinkAlc(k, Number(e.target.value))} />
+                {Object.keys(drinks).length > 1 && <button style={styles.miniDelete} onClick={() => removeDrink(k)}>✕</button>}
+              </div>
+            </div>
           ))}
-        </div>
-      </div>
-
-      <div style={styles.settingBlock}>
-        <div style={styles.settingTitle}>Drinks & alcohol weighting (grams)</div>
-        {Object.entries(drinks).map(([k, d]) => (
-          <div key={k} style={styles.settingRow}>
-            <span style={styles.settingLabel}>{d.emoji} {d.label}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input style={styles.numInput} type="number" step="1" value={d.alcG} onChange={(e) => setDrinkAlc(k, Number(e.target.value))} />
-              {Object.keys(drinks).length > 1 && <button style={styles.miniDelete} onClick={() => removeDrink(k)}>✕</button>}
+          <div style={styles.settingHint}>Standard drink ≈ 14g. Higher = stronger effect on BAC.</div>
+          <div style={styles.addDrinkRow}>
+            <div style={styles.emojiPickRow}>{DRINK_EMOJIS.map((em) => <button key={em} style={{ ...styles.emojiPick, ...(newEmoji === em ? styles.emojiPickOn : {}) }} onClick={() => setNewEmoji(em)}>{em}</button>)}</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input style={{ ...styles.chatInput, flex: 1 }} placeholder="Custom drink name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              <input style={styles.numInput} type="number" step="1" value={newAlc} onChange={(e) => setNewAlc(e.target.value)} />
+              <button style={styles.chatSend} onClick={addCustomDrink}>Add</button>
             </div>
           </div>
-        ))}
-        <div style={styles.settingHint}>Standard drink ≈ 14g. Higher = stronger effect on BAC.</div>
-        <div style={styles.addDrinkRow}>
-          <div style={styles.emojiPickRow}>{DRINK_EMOJIS.map((em) => <button key={em} style={{ ...styles.emojiPick, ...(newEmoji === em ? styles.emojiPickOn : {}) }} onClick={() => setNewEmoji(em)}>{em}</button>)}</div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input style={{ ...styles.chatInput, flex: 1 }} placeholder="Custom drink name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            <input style={styles.numInput} type="number" step="1" value={newAlc} onChange={(e) => setNewAlc(e.target.value)} />
-            <button style={styles.chatSend} onClick={addCustomDrink}>Add</button>
-          </div>
         </div>
-      </div>
+      )}
 
-      <div style={styles.settingBlock}>
-        <div style={styles.settingTitle}>Body size presets (lb)</div>
-        {Object.entries(sizes).map(([k, s]) => (
-          <div key={k} style={styles.settingRow}><span style={styles.settingLabel}>{s.label}</span>
-            <input style={styles.numInput} type="number" step="5" value={s.weightLb} onChange={(e) => setSizeWeight(k, Number(e.target.value))} /></div>
-        ))}
-      </div>
+      {amHost && (
+        <div style={styles.settingBlock}>
+          <div style={styles.settingTitle}>Body size presets (lb) — host only</div>
+          <div style={styles.settingHint}>Used for BAC math. Separate weights for men and women per size. Guests never see this.</div>
+          <div style={{ ...styles.settingRow, color: "#9aa0b5", fontSize: 11 }}>
+            <span style={{ flex: 1 }} /><span style={{ width: 70, textAlign: "center" }}>Men</span><span style={{ width: 70, textAlign: "center" }}>Women</span>
+          </div>
+          {["small", "medium", "tall"].map((sz) => (
+            <div key={sz} style={styles.settingRow}>
+              <span style={{ ...styles.settingLabel, flex: 1, textTransform: "capitalize" }}>{sz}</span>
+              <input style={{ ...styles.numInput, width: 70 }} type="number" step="5" value={sexWeights.male[sz]} onChange={(e) => setSexWeight("male", sz, Number(e.target.value))} />
+              <input style={{ ...styles.numInput, width: 70 }} type="number" step="5" value={sexWeights.female[sz]} onChange={(e) => setSexWeight("female", sz, Number(e.target.value))} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {amHost && <button style={styles.primaryBtn} onClick={save}>Save settings</button>}
       <button style={styles.reset} onClick={onCancel}>Cancel</button>
@@ -939,7 +1018,7 @@ function EditModal({ person, onSave, onRemove, onClose, canRemove, sizes = SIZES
         <div style={styles.formRow}><span style={styles.fieldLabel}>Sex</span><div style={styles.toggle}>{["male", "female"].map((s) => <button key={s} style={{ ...styles.toggleBtn, ...(sex === s ? styles.toggleOn : {}) }} onClick={() => setSex(s)}>{s}</button>)}</div></div>
         <div style={styles.formActions}>
           {canRemove && <button style={styles.removeBtn} onClick={onRemove}>Remove</button>}
-          <button style={styles.saveBtn} onClick={() => onSave({ name, size, weightLb: (sizes[size] || SIZES[size]).weightLb, sex })}>Save</button>
+          <button style={styles.saveBtn} onClick={() => onSave({ name, size, weightLb: weightFor(size, sex), sex })}>Save</button>
         </div>
       </div>
     </div>

@@ -93,6 +93,16 @@ export async function eventsForPhone(phone) {
   return out;
 }
 
+// Upload a chat photo to Supabase Storage, return its public URL.
+export async function uploadChatPhoto(eventId, file) {
+  const ext = (file.name || "photo.jpg").split(".").pop();
+  const path = `${eventId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+  const { error } = await supabase.storage.from("chat-photos").upload(path, file, { upsert: false });
+  if (error) throw error;
+  const { data } = supabase.storage.from("chat-photos").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 // ---- the live hook ----------------------------------------
 // Subscribes to one event and keeps people + drink_log + chat
 // in sync across all connected devices. Returns the assembled
@@ -165,7 +175,7 @@ export function useEvent(eventId) {
   }));
 
   const assembledChat = chat
-    .map((c) => ({ id: c.id, name: c.name, text: c.text, t: new Date(c.created_at).getTime() }))
+    .map((c) => ({ id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, t: new Date(c.created_at).getTime() }))
     .sort((a, b) => a.t - b.t);
 
   // ---- actions (optimistic-free; realtime brings the update back) ----
@@ -204,8 +214,8 @@ export function useEvent(eventId) {
     removePerson: async (personId) => {
       await supabase.from("people").delete().eq("id", personId);
     },
-    postChat: async (personId, name, text) => {
-      await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text });
+    postChat: async (personId, name, text, imageUrl = null) => {
+      await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text, image_url: imageUrl });
     },
     deleteChat: async (chatId) => {
       await supabase.from("chat").delete().eq("id", chatId);

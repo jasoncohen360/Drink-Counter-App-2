@@ -240,4 +240,27 @@ export const styles = {
   histRow: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(191,164,106,0.2)", borderRadius: 10, padding: "12px 14px", cursor: "pointer" },
   histName: { fontSize: 15, color: "#f3ead4" },
   histMeta: { fontSize: 11, color: "#9aa0b5", marginTop: 2 },
+
+  phoneNote: { fontSize: 11, color: "#6f758c", marginTop: -2, lineHeight: 1.5 },
+  homeLink: { background: "none", border: "none", color: "#9aa0b5", fontSize: 12, cursor: "pointer", textDecoration: "underline", marginLeft: 8 },
+  guestNote: { fontSize: 12, color: "#9aa0b5", fontStyle: "italic", textAlign: "center", padding: "12px", background: "rgba(255,255,255,0.03)", borderRadius: 10, lineHeight: 1.5 },
+
+  toast: { position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)", maxWidth: 520, width: "calc(100% - 32px)", background: "rgba(20,24,40,0.96)", border: "1px solid rgba(191,164,106,0.5)", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, zIndex: 60, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", cursor: "pointer", animation: "rise 0.3s ease both" },
+  toastIcon: { fontSize: 16, flexShrink: 0 },
+  toastText: { fontSize: 13, color: "#ece3d0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+
+  explainer: { display: "flex", flexDirection: "column", gap: 8 },
+  explainerP: { fontSize: 12.5, lineHeight: 1.55, color: "#cdd2e0", margin: 0 },
+
+  // chat bubbles
+  bubbleRow: { display: "flex", width: "100%" },
+  bubble: { maxWidth: "78%", borderRadius: 14, padding: "8px 11px", display: "flex", flexDirection: "column", gap: 3 },
+  bubbleMine: { background: "#bfa46a", color: "#15182a", borderBottomRightRadius: 4 },
+  bubbleTheirs: { background: "rgba(255,255,255,0.08)", color: "#ece3d0", borderBottomLeftRadius: 4 },
+  bubbleName: { fontSize: 11, fontWeight: 700, color: "#bfa46a" },
+  bubbleText: { fontSize: 14, lineHeight: 1.35, wordBreak: "break-word" },
+  bubbleImg: { maxWidth: "100%", borderRadius: 8, display: "block" },
+  bubbleTime: { fontSize: 9, opacity: 0.6, display: "flex", gap: 8, alignItems: "center" },
+  bubbleDel: { background: "none", border: "none", color: "inherit", fontSize: 9, cursor: "pointer", textDecoration: "underline", opacity: 0.8, padding: 0 },
+  photoBtn: { background: "rgba(191,164,106,0.12)", border: "1px solid rgba(191,164,106,0.3)", borderRadius: 8, fontSize: 16, cursor: "pointer", padding: "7px 9px", lineHeight: 1 },
 };

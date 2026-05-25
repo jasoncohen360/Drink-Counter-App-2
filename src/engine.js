@@ -17,6 +17,17 @@ export const SIZES = {
   tall: { label: "Tall", weightLb: 200 },
 };
 
+// Sex-specific weight presets (host-only visibility). Falls back to SIZES.
+export const SIZES_BY_SEX = {
+  male:   { small: 150, medium: 180, tall: 210 },
+  female: { small: 125, medium: 150, tall: 175 },
+};
+export function weightFor(size, sex) {
+  const bySex = SIZES_BY_SEX[sex];
+  if (bySex && bySex[size] != null) return bySex[size];
+  return (SIZES[size] || SIZES.medium).weightLb;
+}
+
 export const POUR = { S: { label: "S", mult: 0.65 }, M: { label: "M", mult: 1.0 }, L: { label: "L", mult: 1.5 } };
 export const DEFAULT_POUR = "M";
 const ABSORB_MINUTES = 45;
@@ -48,6 +59,7 @@ export function defaultSettings() {
     theme: "midnight",
     drinks: JSON.parse(JSON.stringify(DRINKS)),
     sizes: JSON.parse(JSON.stringify(SIZES)),
+    sexWeights: JSON.parse(JSON.stringify(SIZES_BY_SEX)),
   };
 }
 
