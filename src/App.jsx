@@ -815,9 +815,7 @@ function IndividualStats({ p, now, drinks = DRINKS, actions, canEdit = false }) 
 // ============================================================
 function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
   const W = 320, H = 180, padL = 34, padR = 10, padT = 14, padB = 24;
-  const svgRef = useRef(null);
   const [scrubT, setScrubT] = useState(null);
-  const [scrubFrac, setScrubFrac] = useState(0.5);
 
   const allTs = people.flatMap((p) => p.log.map((d) => d.t));
   if (allTs.length === 0) return null;
@@ -837,18 +835,18 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
   const fmtTime = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const yLabel = (v) => (metric === "bac" ? v.toFixed(2) : Math.round(v));
   const fmtVal = (v) => (metric === "bac" ? `~${v.toFixed(3)}` : `${Math.round(v)}`);
-  const metricLabel = metric === "bac" ? "BAC" : "Drinks";
 
-  const pointerToTime = (clientX) => {
-    const svg = svgRef.current; if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
-    const clamped = Math.max(padL, Math.min(W - padR, px));
-    return t0 + ((clamped - padL) / (W - padL - padR)) * span;
+  const tipData = scrubT != null ? series.map((s) => ({ name: s.person.name, color: s.color, v: valueAt(s.person, scrubT, metric) })) : null;
+
+  // Tap (or drag) anywhere on the chart to pick a moment. Uses the wrapper
+  // div's own geometry — simplest and most reliable on phones.
+  const wrapRef = useRef(null);
+  const selectFromClientX = (clientX) => {
+    const el = wrapRef.current; if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    setScrubT(t0 + frac * span);
   };
-  const handleMove = (e) => { const cx = e.clientX != null ? e.clientX : (e.touches && e.touches[0] && e.touches[0].clientX); if (cx == null) return; const t = pointerToTime(cx); if (t != null) { setScrubT(t); setScrubFrac(Math.max(0, Math.min(1, (t - t0) / span))); } };
-  const endScrub = () => setScrubT(null);
-  const tip = scrubT != null ? series.map((s) => ({ name: s.person.name, color: s.color, v: valueAt(s.person, scrubT, metric) })) : null;
 
   return (
     <div style={styles.graphWrap}>
@@ -860,9 +858,14 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
           ))}
         </div>
       </div>
-      <div style={{ position: "relative" }}>
-        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", touchAction: "none", display: "block", cursor: "crosshair" }}>
-          <g style={{ pointerEvents: "none" }}>
+      <div
+        ref={wrapRef}
+        style={{ position: "relative", cursor: "pointer", touchAction: "none" }}
+        onClick={(e) => selectFromClientX(e.clientX)}
+        onPointerMove={(e) => { if (e.buttons === 1) selectFromClientX(e.clientX); }}
+        onTouchMove={(e) => { if (e.touches[0]) selectFromClientX(e.touches[0].clientX); }}
+      >
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }}>
           {[0, 0.25, 0.5, 0.75, 1].map((f, i) => { const gv = maxV * f; return (
             <g key={i}>
               <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
@@ -883,26 +886,31 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
             return <g key={s.person.id}><path d={path} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" opacity="0.9" />{last.v > 0 && <circle cx={x(last.t)} cy={y(last.v)} r="2.5" fill={s.color} />}</g>;
           })}
           {scrubT != null && (
-            <g style={{ pointerEvents: "none" }}>
-              <line x1={x(scrubT)} y1={padT - 6} x2={x(scrubT)} y2={H - padB} stroke="#f3ead4" strokeWidth="1" strokeDasharray="3 3" opacity="0.8" />
-              {series.map((s) => <circle key={s.person.id} cx={x(scrubT)} cy={y(valueAt(s.person, scrubT, metric))} r="3" fill={s.color} stroke="#15182a" strokeWidth="0.5" />)}
+            <g>
+              <line x1={x(scrubT)} y1={padT - 6} x2={x(scrubT)} y2={H - padB} stroke="#f3ead4" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.9" />
+              {series.map((s) => <circle key={s.person.id} cx={x(scrubT)} cy={y(valueAt(s.person, scrubT, metric))} r="3.5" fill={s.color} stroke="#15182a" strokeWidth="0.5" />)}
             </g>
           )}
-          </g>
-          <rect x="0" y="0" width={W} height={H} fill="transparent" style={{ touchAction: "none" }}
-            onPointerDown={(e) => { e.currentTarget.setPointerCapture?.(e.pointerId); handleMove(e); }}
-            onPointerMove={(e) => { if (e.buttons === 1 || e.pointerType === "touch") handleMove(e); }}
-            onPointerUp={endScrub} onPointerCancel={endScrub} />
         </svg>
-        {scrubT != null && tip && (
-          <div style={{ ...styles.tip, left: `${scrubFrac * 100}%`, transform: scrubFrac > 0.55 ? "translateX(-100%) translateX(-14px)" : "translateX(14px)" }}>
-            <div style={styles.tipTime}>{fmtTime(scrubT)}</div>
-            {tip.map((r) => <div key={r.name} style={styles.tipRow}><span style={{ ...styles.legendDot, background: r.color }} /><span style={styles.tipName}>{r.name}</span><span style={styles.tipVal}>{fmtVal(r.v)}</span></div>)}
-          </div>
-        )}
       </div>
       <div style={styles.legend}>{series.map((s) => <span key={s.person.id} style={styles.legendItem}><span style={{ ...styles.legendDot, background: s.color }} />{s.person.name}</span>)}</div>
-      <div style={styles.scrubHint}>{scrubT != null ? `${metricLabel} at ${fmtTime(scrubT)}` : "Drag across the chart to rewind the night"}</div>
+      {scrubT != null && tipData ? (
+        <div style={styles.scrubPanel}>
+          <div style={styles.scrubPanelHead}>
+            <span>📍 At {fmtTime(scrubT)}</span>
+            <button style={styles.scrubClear} onClick={() => setScrubT(null)}>clear</button>
+          </div>
+          {[...tipData].sort((a, b) => b.v - a.v).map((r) => (
+            <div key={r.name} style={styles.tipRow}>
+              <span style={{ ...styles.legendDot, background: r.color }} />
+              <span style={styles.tipName}>{r.name}</span>
+              <span style={styles.tipVal}>{fmtVal(r.v)} {metric === "bac" ? "BAC" : "drinks"}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={styles.scrubHint}>Tap anywhere on the chart to see that moment's stats</div>
+      )}
     </div>
   );
 }
