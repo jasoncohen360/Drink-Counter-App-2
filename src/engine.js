@@ -136,5 +136,29 @@ export function favoriteDrink(person) {
   return best ? { type: best, n: bestN } : null;
 }
 
+// Best 30-minute drinking stretch for a person: the max drinks in any 30-min window.
+export function bestStretch(person, windowMin = 30) {
+  const drinks = person.log.filter((e) => e.type !== "vomit").map((e) => e.t).sort((a, b) => a - b);
+  if (drinks.length === 0) return { count: 0, startT: null };
+  const win = windowMin * 60000;
+  let best = 0, bestStart = drinks[0];
+  for (let i = 0; i < drinks.length; i++) {
+    let c = 0;
+    for (let j = i; j < drinks.length && drinks[j] - drinks[i] <= win; j++) c++;
+    if (c > best) { best = c; bestStart = drinks[i]; }
+  }
+  return { count: best, startT: bestStart };
+}
+
+// Across everyone: who had the single best stretch.
+export function bestStretchOverall(people, windowMin = 30) {
+  let champ = null, champCount = 0, champStart = null;
+  people.forEach((p) => {
+    const s = bestStretch(p, windowMin);
+    if (s.count > champCount) { champCount = s.count; champ = p; champStart = s.startT; }
+  });
+  return champ ? { name: champ.name, count: champCount, startT: champStart } : null;
+}
+
 export const valueAt = (person, t, metric) => (metric === "drinks" ? drinkCountAtTime(person, t) : bacAtTime(person, t));
 export const LINE_COLORS = ["#bfa46a", "#7dd3a0", "#e8a94a", "#d9533b", "#6aa6e8", "#c084d9", "#e8c95a", "#5ad9c0", "#e87aa9", "#9ad97f"];

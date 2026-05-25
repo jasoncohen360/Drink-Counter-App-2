@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, valueAt, LINE_COLORS,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS,
 } from "./engine.js";
 import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto } from "./useEvent.js";
 import { styles, GLOBAL_CSS, SERIF } from "./styles.js";
@@ -12,6 +12,31 @@ const LS_PHONE = "lastcall_phone";
 const LS_NAME = "lastcall_name";
 const LS_EVENT = "lastcall_event";
 const LS_PERSON = "lastcall_person";
+
+// Catches any render crash and offers a way out, instead of a blank screen.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { crashed: false, msg: "" }; }
+  static getDerivedStateFromError(err) { return { crashed: true, msg: err?.message || String(err) }; }
+  reset = () => {
+    try { localStorage.removeItem(LS_EVENT); localStorage.removeItem(LS_PERSON); } catch (e) {}
+    this.setState({ crashed: false, msg: "" });
+    if (this.props.onReset) this.props.onReset();
+    else if (typeof window !== "undefined") window.location.reload();
+  };
+  render() {
+    if (this.state.crashed) {
+      return (
+        <div style={{ ...styles.page, alignItems: "center", justifyContent: "center", gap: 16, textAlign: "center" }}>
+          <div style={{ fontFamily: SERIF, fontSize: 24, color: "#f3ead4", fontStyle: "italic" }}>Something hiccuped</div>
+          <div style={{ color: "#9aa0b5", fontSize: 14, lineHeight: 1.5 }}>The app hit a snag. This button clears the stuck event and takes you back to the start — your party data is safe in the cloud.</div>
+          <button style={styles.primaryBtn} onClick={this.reset}>↺ Reset & go to start</button>
+          <div style={{ fontSize: 10, color: "#5a6078" }}>{this.state.msg}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [eventId, setEventId] = useState(() => localStorage.getItem(LS_EVENT) || null);
@@ -30,8 +55,12 @@ export default function App() {
     setMyPersonId(null);
   };
 
-  if (!eventId) return <FrontDoor onEnter={enterEvent} />;
-  return <EventScreen eventId={eventId} myPersonId={myPersonId} onLeave={leaveEvent} />;
+  if (!eventId) return <ErrorBoundary onReset={leaveEvent}><FrontDoor onEnter={enterEvent} /></ErrorBoundary>;
+  return (
+    <ErrorBoundary onReset={leaveEvent}>
+      <EventScreen eventId={eventId} myPersonId={myPersonId} onLeave={leaveEvent} />
+    </ErrorBoundary>
+  );
 }
 
 // ============================================================
@@ -275,6 +304,9 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const [toast, setToast] = useState(null);
   const lastChatRef = useRef(chat.length);
 
+  const me = people.find((p) => p.id === myPersonId);
+  const amHost = me?.role === "host";
+
   // pop a toast when a new chat arrives from someone else
   useEffect(() => {
     if (chat.length > lastChatRef.current) {
@@ -289,8 +321,6 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     lastChatRef.current = chat.length;
   }, [chat, me]);
 
-  const me = people.find((p) => p.id === myPersonId);
-  const amHost = me?.role === "host";
   const unreadChat = chat.filter((m) => m.t > chatSeen).length;
   const openTab = (t) => { if (t === "chat") setChatSeen(Date.now()); setTab(t); };
   const partyDrinks = people.reduce((a, p) => a + drinkCountAtTime(p, liveNow), 0);
@@ -1079,11 +1109,13 @@ function buildWrappedSlides(people, eventName, event, endT, drinks) {
   for (const [k, n] of Object.entries(tally)) if (n > favN) { favType = k; favN = n; }
   const totalVomits = people.reduce((a, p) => a + p.log.filter((e) => e.type === "vomit").length, 0);
   const champ = byDrinks[0], highest = byPeak[0];
+  const stretch = bestStretchOverall(people, 30);
   const dd = (k) => drinks[k] || DRINKS[k] || { emoji: "🍸", label: k };
   const slides = [
     { kicker: "THAT'S A WRAP ON", big: eventName, sub: `${people.length} people · ${Math.round(hours * 10) / 10} hours`, bg: "linear-gradient(160deg,#3a2a5a,#1a2238)" },
     { kicker: "TOGETHER YOU PUT AWAY", big: `${totalDrinks}`, sub: `drink${totalDrinks === 1 ? "" : "s"} — ${(totalDrinks / hours).toFixed(1)} per hour as a group`, bg: "linear-gradient(160deg,#7a3b2e,#2a1622)" },
     { kicker: "DRINK OF THE NIGHT", big: favType ? `${dd(favType).emoji} ${dd(favType).label}` : "—", sub: favType ? `ordered ${favN} times` : "no drinks logged", bg: "linear-gradient(160deg,#2e5a4a,#15222a)" },
+    { kicker: "BEST 30-MINUTE STRETCH", big: stretch && stretch.count > 0 ? `🔥 ${stretch.name}` : "—", sub: stretch && stretch.count > 0 ? `${stretch.count} drinks in half an hour${stretch.startT ? ` · from ${new Date(stretch.startT).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}` : "no big runs tonight", bg: "linear-gradient(160deg,#7a4a1e,#2a1a10)" },
     { kicker: "TONIGHT'S CHAMPION", big: champ && champ.n > 0 ? `♛ ${champ.name}` : "—", sub: champ && champ.n > 0 ? `${champ.n} drinks, no notes` : "nobody drank", bg: "linear-gradient(160deg,#7a6328,#2a2415)" },
     { kicker: "HIGHEST PEAK BAC", big: highest && highest.b > 0 ? `~${highest.b.toFixed(3)}` : "—", sub: highest && highest.b > 0 ? `${highest.name} reached the summit` : "—", bg: "linear-gradient(160deg,#5a2e4a,#221522)" },
     { kicker: "THE FINAL LEADERBOARD", big: "", list: byDrinks.filter((r) => r.n > 0).map((r) => ({ name: r.name, val: `${r.n}` })), bg: "linear-gradient(160deg,#2a3b5a,#15182a)" },
