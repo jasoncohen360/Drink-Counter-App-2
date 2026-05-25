@@ -1,0 +1,237 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase } from "./supabaseClient.js";
+
+// ============================================================
+// DATA LAYER
+// Everything that talks to the database lives here. The UI
+// calls these functions and reads `data`; it never touches
+// Supabase directly. This keeps the app code clean and means
+// if we ever change backends, only this file changes.
+// ============================================================
+
+// ---- one-time helpers (event creation / joining) ----------
+
+function randomCode() {
+  // 5-char alphanumeric, avoiding ambiguous chars (no O/0/I/1)
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let c = "";
+  for (let i = 0; i < 5; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
+// Create a brand-new event. Returns { eventId, joinCode } or throws.
+export async function createEvent({ eventName, hostName, size, sex, weightLb, settings, hostPhone }) {
+  // try a few times in case of a code collision (rare)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const join_code = randomCode();
+    const { data: ev, error } = await supabase
+      .from("events")
+      .insert({ name: eventName || "The Party", join_code, host_phone: hostPhone || "", settings: settings || {} })
+      .select()
+      .single();
+    if (error) {
+      if (error.code === "23505") continue; // unique violation on join_code, retry
+      throw error;
+    }
+    // add the host as the first person
+    const { data: host, error: pErr } = await supabase
+      .from("people")
+      .insert({
+        event_id: ev.id, name: hostName || "Host", phone: hostPhone || null,
+        size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "host",
+      })
+      .select()
+      .single();
+    if (pErr) throw pErr;
+    return { eventId: ev.id, joinCode: ev.join_code, hostPersonId: host.id };
+  }
+  throw new Error("Could not generate a unique join code, please try again.");
+}
+
+// Find an event by its join code. Returns event row or null.
+export async function findEventByCode(code) {
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("join_code", (code || "").toUpperCase().trim())
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Join an existing event as a new person. Returns the person row.
+export async function joinEvent({ eventId, name, size, sex, weightLb, phone }) {
+  const { data, error } = await supabase
+    .from("people")
+    .insert({
+      event_id: eventId, name: name || "Guest", phone: phone || null,
+      size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "guest",
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Look up which events a phone number has been part of (event history).
+export async function eventsForPhone(phone) {
+  if (!phone) return [];
+  const { data, error } = await supabase
+    .from("people")
+    .select("event_id, role, events!inner(id, name, join_code, phase, created_at, ended_at)")
+    .eq("phone", phone)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  // de-dupe by event
+  const seen = new Set();
+  const out = [];
+  for (const row of data || []) {
+    if (seen.has(row.event_id)) continue;
+    seen.add(row.event_id);
+    out.push({ ...row.events, myRole: row.role });
+  }
+  return out;
+}
+
+// ---- the live hook ----------------------------------------
+// Subscribes to one event and keeps people + drink_log + chat
+// in sync across all connected devices. Returns the assembled
+// state plus action functions.
+
+export function useEvent(eventId) {
+  const [event, setEvent] = useState(null);
+  const [people, setPeople] = useState([]);
+  const [logs, setLogs] = useState([]); // flat drink_log rows
+  const [chat, setChat] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // initial load
+  const reload = useCallback(async () => {
+    if (!eventId) return;
+    try {
+      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }] = await Promise.all([
+        supabase.from("events").select("*").eq("id", eventId).single(),
+        supabase.from("people").select("*").eq("event_id", eventId),
+        supabase.from("drink_log").select("*").eq("event_id", eventId),
+        supabase.from("chat").select("*").eq("event_id", eventId),
+      ]);
+      setEvent(ev || null);
+      setPeople(ppl || []);
+      setLogs(dl || []);
+      setChat(ch || []);
+      setError(null);
+    } catch (e) {
+      setError(e.message || "Failed to load event");
+    } finally {
+      setLoading(false);
+    }
+  }, [eventId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // realtime subscriptions — any change on any device refreshes the relevant slice
+  useEffect(() => {
+    if (!eventId) return;
+    const ch = supabase
+      .channel("event-" + eventId)
+      .on("postgres_changes", { event: "*", schema: "public", table: "people", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("people").select("*").eq("event_id", eventId).then(({ data }) => data && setPeople(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "drink_log", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("drink_log").select("*").eq("event_id", eventId).then(({ data }) => data && setLogs(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("chat").select("*").eq("event_id", eventId).then(({ data }) => data && setChat(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `id=eq.${eventId}` },
+        () => supabase.from("events").select("*").eq("id", eventId).single().then(({ data }) => data && setEvent(data)))
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [eventId]);
+
+  // ---- assemble into the shape the UI expects ----
+  // Each person gets a `log` array of { type, pour, t } sorted by time,
+  // exactly like the artifact used, so the UI/engine code is unchanged.
+  const assembledPeople = people.map((p) => ({
+    id: p.id,
+    name: p.name,
+    phone: p.phone,
+    size: p.size,
+    sex: p.sex,
+    weightLb: p.weight_lb,
+    role: p.role,
+    log: logs
+      .filter((l) => l.person_id === p.id)
+      .map((l) => ({ type: l.type, pour: l.pour, t: new Date(l.t).getTime(), _id: l.id }))
+      .sort((a, b) => a.t - b.t),
+  }));
+
+  const assembledChat = chat
+    .map((c) => ({ id: c.id, name: c.name, text: c.text, t: new Date(c.created_at).getTime() }))
+    .sort((a, b) => a.t - b.t);
+
+  // ---- actions (optimistic-free; realtime brings the update back) ----
+  const actions = {
+    addDrink: async (personId, type) => {
+      await supabase.from("drink_log").insert({ person_id: personId, event_id: eventId, type, pour: "M" });
+    },
+    addVomit: async (personId) => {
+      await supabase.from("drink_log").insert({ person_id: personId, event_id: eventId, type: "vomit", pour: "M" });
+    },
+    setPour: async (logId, pour) => {
+      await supabase.from("drink_log").update({ pour }).eq("id", logId);
+    },
+    setDrinkType: async (logId, type) => {
+      await supabase.from("drink_log").update({ type }).eq("id", logId);
+    },
+    deleteEntry: async (logId) => {
+      await supabase.from("drink_log").delete().eq("id", logId);
+    },
+    undoLast: async (personId) => {
+      // delete this person's most recent log row
+      const mine = logs.filter((l) => l.person_id === personId).sort((a, b) => new Date(b.t) - new Date(a.t));
+      if (mine[0]) await supabase.from("drink_log").delete().eq("id", mine[0].id);
+    },
+    addPerson: async ({ name, size, sex, weightLb }) => {
+      await supabase.from("people").insert({ event_id: eventId, name, size, sex, weight_lb: weightLb, role: "guest" });
+    },
+    updatePerson: async (personId, fields) => {
+      const patch = {};
+      if (fields.name != null) patch.name = fields.name;
+      if (fields.size != null) patch.size = fields.size;
+      if (fields.sex != null) patch.sex = fields.sex;
+      if (fields.weightLb != null) patch.weight_lb = fields.weightLb;
+      await supabase.from("people").update(patch).eq("id", personId);
+    },
+    removePerson: async (personId) => {
+      await supabase.from("people").delete().eq("id", personId);
+    },
+    postChat: async (personId, name, text) => {
+      await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text });
+    },
+    deleteChat: async (chatId) => {
+      await supabase.from("chat").delete().eq("id", chatId);
+    },
+    saveSettings: async (settings) => {
+      await supabase.from("events").update({ settings }).eq("id", eventId);
+    },
+    endNight: async () => {
+      await supabase.from("events").update({ phase: "ended", ended_at: new Date().toISOString() }).eq("id", eventId);
+    },
+    reopen: async () => {
+      await supabase.from("events").update({ phase: "live", ended_at: null }).eq("id", eventId);
+    },
+  };
+
+  return {
+    loading,
+    error,
+    event,
+    people: assembledPeople,
+    chat: assembledChat,
+    settings: event?.settings || {},
+    phase: event?.phase || "live",
+    joinCode: event?.join_code || "",
+    eventName: event?.name || "",
+    reload,
+    actions,
+  };
+}
