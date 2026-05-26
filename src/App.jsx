@@ -2,8 +2,13 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta,
 } from "./engine.js";
+
+// tiny convenience wrappers for team display
+const teamLabel = (settings, id) => teamMeta(settings, id)?.label || "";
+const teamColor = (settings, id) => teamMeta(settings, id)?.color || "#999";
+const teamEmoji = (settings, id) => teamMeta(settings, id)?.emoji || "🚩";
 import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto, deleteEvent, leaveEventHistory, postSuggestion, fetchSuggestions } from "./useEvent.js";
 import { styles, GLOBAL_CSS, SERIF } from "./styles.js";
 
@@ -163,8 +168,8 @@ function FrontDoor({ onEnter, urlCode = "" }) {
         )}
 
         <p style={styles.disclaimer}>
-          We use your phone number only to remember your events — there's no verification text, and it's
-          not bank-level secure. BAC figures are rough estimates, never a basis for deciding if anyone can drive.
+          Phone number's optional — just lets us remember your past events. No texts, ever.
+          BAC is a fun estimate, not a real reading.
         </p>
       </div>
     </div>
@@ -199,11 +204,9 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
         <button style={styles.linkBtn} onClick={onBack}>‹ Back</button>
         <div style={styles.kicker}>HOST A PARTY</div>
         <h1 style={styles.bigTitle}>New event</h1>
-        <label style={styles.fieldLabel}>Event name</label>
-        <input style={styles.inputBig} placeholder="e.g. Evan & Hillary's Wedding" value={evName}
+        <input style={styles.inputBig} placeholder="Event name (e.g. Evan & Hillary's Wedding)" value={evName}
           onChange={(e) => setEvName(e.target.value)} autoFocus />
-        <label style={styles.fieldLabel}>Your name</label>
-        <input style={styles.inputBig} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={styles.inputBig} placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
         <div style={styles.formRow}>
           <SizeInfoLabel />
           <div style={styles.toggle}>
@@ -460,7 +463,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       {tab === "leaderboard" && (
         partyDrinks > 0 ? (
           <>
-            {(settings.teamCount || 0) > 0 && <TeamStandings people={people} teamCount={settings.teamCount} now={liveNow} drinks={drinksMap} />}
+            {(settings.teamCount || 0) > 0 && <TeamStandings people={people} settings={settings} now={liveNow} drinks={drinksMap} />}
             <Leaderboard people={people} now={liveNow} accent={theme.accent} />
             <GroupStats people={people} now={liveNow} drinks={drinksMap} />
             <FavoriteDrinksChart people={people} drinks={drinksMap} />
@@ -475,9 +478,9 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
             <div style={styles.teamPickWrap}>
               <div style={styles.quickTitle}>{me.team ? "Your team" : "🚩 Pick your team"}</div>
               <div style={styles.teamPickRow}>
-                {TEAM_DEFS.slice(0, settings.teamCount).map((t) => (
+                {teamList(settings).map((t) => (
                   <button key={t.id} style={{ ...styles.teamPickBtn, borderColor: t.color, ...(me.team === t.id ? { background: t.color, color: "#15182a", fontWeight: 700 } : {}) }}
-                    onClick={() => actions.setTeam(me.id, t.id)}>{t.label}</button>
+                    onClick={() => actions.setTeam(me.id, t.id)}>{t.emoji} {t.label}</button>
                 ))}
               </div>
             </div>
@@ -503,7 +506,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
                 return (
                   <div key={p.id} style={styles.quickRow}>
                     <div style={styles.quickInfo} onClick={() => setExpandedId(p.id)}>
-                      <span style={styles.quickName}>{p.name}</span>
+                      <span style={styles.quickName}>{p.name}{p.team && teamLabel(settings, p.team) ? <span style={{ ...styles.teamTag, background: teamColor(settings, p.team) }}>{teamEmoji(settings, p.team)}</span> : null}</span>
                       <span style={styles.quickMeta}>{count} drink{count === 1 ? "" : "s"} · <span style={{ color: desc.tone }}>{desc.word}</span></span>
                     </div>
                     <div style={styles.quickBtns}>
@@ -513,6 +516,15 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
                       <button style={styles.quickVomit} onClick={() => setConfirmVomitId(p.id)} title="Vomit">🤮</button>
                       <button style={styles.quickEdit} onClick={() => setExpandedId(p.id)}>⋯</button>
                     </div>
+                    {(settings.teamCount || 0) > 0 && (
+                      <div style={styles.assignRow}>
+                        <span style={styles.assignLabel}>team:</span>
+                        {teamList(settings).map((t) => (
+                          <button key={t.id} style={{ ...styles.assignChip, borderColor: t.color, ...(p.team === t.id ? { background: t.color, color: "#15182a" } : {}) }}
+                            onClick={() => actions.setTeam(p.id, p.team === t.id ? null : t.id)}>{t.emoji} {t.label}</button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -529,7 +541,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       )}
 
       {tab === "chat" && (
-        <ChatBox chat={chat} me={me} eventId={ev.event.id} onPost={(text, imageUrl) => me && actions.postChat(me.id, me.name, text, imageUrl)} onDelete={actions.deleteChat} onReact={actions.toggleReaction} now={liveNow} />
+        <ChatBox chat={chat} me={me} people={people} eventId={ev.event.id} onPost={(text, imageUrl, toPerson) => me && actions.postChat(me.id, me.name, text, imageUrl, toPerson)} onDelete={actions.deleteChat} onReact={actions.toggleReaction} now={liveNow} />
       )}
 
       {shotEnabled && me && (
@@ -544,7 +556,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
         <button style={styles.reset} onClick={onLeave}>Leave this event</button>
       )}
 
-      <p style={styles.disclaimer}>BAC is a rough estimate, not a real reading. Never use it to decide if anyone can drive.</p>
+      <p style={styles.disclaimer}>BAC here is a fun estimate, not a real reading — don't make real decisions off it.</p>
 
       {editingId && (
         <EditModal person={people.find((p) => p.id === editingId)} sizes={sizesMap}
@@ -675,8 +687,8 @@ function LiveFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [] }) {
 // ============================================================
 // TEAM STANDINGS
 // ============================================================
-function TeamStandings({ people, teamCount, now, drinks }) {
-  const teams = teamStats(people, teamCount, now, drinks);
+function TeamStandings({ people, settings, now, drinks }) {
+  const teams = teamStats(people, settings, now, drinks);
   const maxAvg = Math.max(0.001, ...teams.map((t) => t.avg));
   const anyMembers = teams.some((t) => t.members.length > 0);
   return (
@@ -933,11 +945,13 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
   // Restored from the original version that worked well: handlers directly on
   // the SVG, mouse + touch, marker shows while dragging and clears on release.
   const svgRef = useRef(null);
+  const [dbg, setDbg] = useState("idle");
   const pointerToTime = (clientX) => {
     const svg = svgRef.current; if (!svg) return null;
     const rect = svg.getBoundingClientRect();
     const px = ((clientX - rect.left) / rect.width) * W;
     const clamped = Math.max(padL, Math.min(W - padR, px));
+    setDbg(`cx=${Math.round(clientX)} L=${Math.round(rect.left)} w=${Math.round(rect.width)} px=${Math.round(px)}`);
     return t0 + ((clamped - padL) / (W - padL - padR)) * span;
   };
   const handleMove = (e) => {
@@ -1004,6 +1018,7 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
       </div>
       <div style={styles.legend}>{series.map((s) => <span key={s.person.id} style={styles.legendItem}><span style={{ ...styles.legendDot, background: s.color }} />{s.person.name}</span>)}</div>
       <div style={styles.scrubHint}>{scrubT != null ? `${metric === "bac" ? "BAC" : "Drinks"} at ${fmtTime(scrubT)}` : "Press and drag across the chart to rewind the night"}</div>
+      <div style={{ fontSize: 9, color: "#5a6078", textAlign: "center", fontFamily: "monospace" }}>debug: {dbg}</div>
     </div>
   );
 }
@@ -1011,17 +1026,26 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
 // ============================================================
 // CHAT
 // ============================================================
-function ChatBox({ chat, me, eventId, onPost, onDelete, onReact, now }) {
+function ChatBox({ chat, me, people = [], eventId, onPost, onDelete, onReact, now }) {
   const [text, setText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [pickerFor, setPickerFor] = useState(null);
+  const [dm, setDm] = useState(null); // null = group; otherwise a personId
   const fileRef = useRef(null);
   const listRef = useRef(null);
   const REACTIONS = ["❤️", "👍", "👎", "🥂", "❗"];
 
-  useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [chat.length]);
+  useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [chat.length, dm]);
 
-  const send = () => { const t = text.trim(); if (!t || !me) return; onPost(t, null); setText(""); };
+  // filter: group view shows messages with no recipient; DM view shows messages between me and the selected person
+  const visible = chat.filter((m) => {
+    if (!dm) return !m.toPerson;
+    if (!me) return false;
+    return (m.personId === me.id && m.toPerson === dm) || (m.personId === dm && m.toPerson === me.id);
+  });
+  const others = people.filter((p) => me && p.id !== me.id);
+
+  const send = () => { const t = text.trim(); if (!t || !me) return; onPost(t, null, dm); setText(""); };
   const pickPhoto = () => fileRef.current?.click();
   const onPhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -1029,7 +1053,7 @@ function ChatBox({ chat, me, eventId, onPost, onDelete, onReact, now }) {
     setUploading(true);
     try {
       const url = await uploadChatPhoto(eventId, file);
-      onPost(text.trim() || "", url);
+      onPost(text.trim() || "", url, dm);
       setText("");
     } catch (err) {
       alert("Photo upload failed. Make sure photo storage is set up (see deploy notes). " + (err.message || ""));
@@ -1045,12 +1069,23 @@ function ChatBox({ chat, me, eventId, onPost, onDelete, onReact, now }) {
     onReact(chatId, me.id, emoji, who.includes(me.id));
     setPickerFor(null);
   };
+  const dmName = dm ? (people.find((p) => p.id === dm)?.name || "someone") : null;
 
   return (
     <div style={styles.chatWrap}>
+      <div style={styles.chatModeRow}>
+        <button style={{ ...styles.chatModeBtn, ...(dm === null ? styles.chatModeOn : {}) }} onClick={() => setDm(null)}>Group</button>
+        {others.length > 0 && (
+          <select style={styles.chatDmSelect} value={dm || ""} onChange={(e) => setDm(e.target.value || null)}>
+            <option value="">Private message…</option>
+            {others.map((p) => <option key={p.id} value={p.id}>🔒 {p.name}</option>)}
+          </select>
+        )}
+      </div>
+      {dm && <div style={styles.dmBanner}>🔒 Private with {dmName} — only you two see this</div>}
       <div style={styles.chatList} ref={listRef}>
-        {chat.length === 0 && <div style={styles.chatEmpty}>No messages yet. Say hi 👋</div>}
-        {[...chat].sort((a, b) => a.t - b.t).map((m) => {
+        {visible.length === 0 && <div style={styles.chatEmpty}>{dm ? `No messages with ${dmName} yet.` : "No messages yet. Say hi 👋"}</div>}
+        {[...visible].sort((a, b) => a.t - b.t).map((m) => {
           const mine = me && m.personId === me.id;
           const rx = m.reactions || {};
           const hasRx = Object.values(rx).some((arr) => arr.length > 0);
@@ -1063,7 +1098,7 @@ function ChatBox({ chat, me, eventId, onPost, onDelete, onReact, now }) {
                   {m.text && <div style={styles.bubbleText}>{m.text}</div>}
                   <div style={styles.bubbleTime}>{timeStr(m.t)}{mine && <button style={styles.bubbleDel} onClick={() => onDelete(m.id)}>delete</button>}</div>
                 </div>
-                <div style={styles.reactBar}>
+                <div style={{ ...styles.reactBar, justifyContent: mine ? "flex-end" : "flex-start" }}>
                   {hasRx && Object.entries(rx).map(([emoji, arr]) => arr.length > 0 && (
                     <button key={emoji} style={{ ...styles.reactChip, ...(me && arr.includes(me.id) ? styles.reactChipMine : {}) }} onClick={() => react(m.id, emoji)}>
                       {emoji} {arr.length}
@@ -1084,10 +1119,20 @@ function ChatBox({ chat, me, eventId, onPost, onDelete, onReact, now }) {
       <div style={styles.chatInputRow}>
         <button style={styles.photoBtn} onClick={pickPhoto} disabled={uploading} title="Add photo">{uploading ? "…" : "📷"}</button>
         <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onPhoto} />
-        <input style={styles.chatInput} placeholder="Message…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
+        <input style={styles.chatInput} placeholder={dm ? `Message ${dmName}…` : "Message…"} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
         <button style={styles.chatSend} onClick={send}>Send</button>
       </div>
     </div>
+  );
+}
+
+function InfoInline({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      <button style={styles.infoDot} onClick={() => setOpen(!open)} type="button">ⓘ</button>
+      {open && <span style={styles.infoPop} onClick={() => setOpen(false)}>{text}</span>}
+    </span>
   );
 }
 
@@ -1118,8 +1163,7 @@ function WalkthroughModal({ onClose, shotEnabled, teamsOn }) {
     { icon: "💬", title: "Chat", body: "Talk trash, send photos, react. New messages pop up at the top." },
   ];
   if (teamsOn) steps.push({ icon: "🚩", title: "Teams", body: "This party has teams — pick yours and rack up drinks for your side. Scored by average per person, so small teams still have a shot." });
-  if (shotEnabled) steps.push({ icon: "🥃", title: "Shot call", body: "You get one 'Call shots!' blast for the whole night. Use it wisely — it takes over everyone's screen." });
-  steps.push({ icon: "💧", title: "One thing", body: "BAC here is a rough estimate, not a breathalyzer. Never use it to decide if someone can drive. Drink water, look out for each other, have fun!" });
+  steps.push({ icon: "🍻", title: "That's it", body: "Tap, sip, talk trash. Let's get into it." });
   const s = steps[step];
   const last = step >= steps.length - 1;
   return (
@@ -1205,6 +1249,8 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
   const [sexWeights, setSexWeights] = useState(JSON.parse(JSON.stringify(init.sexWeights || SIZES_BY_SEX)));
   const [shotCallEnabled, setShotCallEnabled] = useState(init.shotCallEnabled === true);
   const [teamCount, setTeamCount] = useState(init.teamCount || 0);
+  const [teams, setTeams] = useState(JSON.parse(JSON.stringify(init.teams || {})));
+  const setTeamField = (id, field, val) => setTeams((t) => ({ ...t, [id]: { ...(t[id] || {}), [field]: val } }));
   const [drinkNotifs, setDrinkNotifs] = useState(init.drinkNotifs === true);
   const setSexWeight = (sex, sz, v) => setSexWeights((w) => ({ ...w, [sex]: { ...w[sex], [sz]: v } }));
   const [newName, setNewName] = useState("");
@@ -1221,7 +1267,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
     setDrinks((d) => ({ ...d, [key]: { label, emoji: newEmoji, alcG: Number(newAlc) || 14, custom: true } }));
     setNewName(""); setNewAlc(14);
   };
-  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights, shotCallEnabled, teamCount, drinkNotifs });
+  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights, shotCallEnabled, teamCount, drinkNotifs, teams });
 
   return (
     <div style={themedPage({ theme })}>
@@ -1235,10 +1281,9 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
       <div style={styles.settingBlock}>
         <div style={styles.settingTitle}>How this works & drinking safely</div>
         <div style={styles.explainer}>
-          <p style={styles.explainerP}>Last Call estimates everyone's blood alcohol (BAC) using the <b>Widmark formula</b> — a standard method that combines how much alcohol you've had, your body weight, a difference in body-water between men and women, and how much time has passed (your body clears alcohol slowly, so BAC falls when you stop drinking).</p>
-          <p style={styles.explainerP}>Smaller people and women tend to hit a higher BAC from the same drinks — that's just biology in the math.</p>
-          <p style={styles.explainerP}>It's an estimate, not a breathalyzer, so treat it as a fun gauge rather than gospel. Never use it to decide if someone can drive.</p>
-          <p style={styles.explainerP}>Drink water, look out for each other, and have fun. 🥂</p>
+          <p style={styles.explainerP}>Last Call estimates everyone's blood alcohol (BAC) using the <b>Widmark formula</b> — a real method that factors in what you've had, your body weight, a men-vs-women difference, and time (your body burns it off slowly, so the number drifts down when you ease up).</p>
+          <p style={styles.explainerP}>Smaller folks and women climb faster on the same drinks — just how the math shakes out.</p>
+          <p style={styles.explainerP}>It's a ballpark for fun, not a breathalyzer. Now go enjoy. 🥂</p>
         </div>
       </div>
 
@@ -1312,10 +1357,9 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
         <div style={styles.settingBlock}>
           <div style={styles.settingTitle}>Party extras</div>
           <div style={styles.settingRow}>
-            <span style={styles.settingLabel}>🥃 Shot call</span>
+            <span style={styles.settingLabel}>🥃 Shot call <InfoInline text="Gives everyone one 'Call shots!' blast per night that takes over all phones with a full-screen alert. A fun way to rally the group for a round. Off by default." /></span>
             <button style={{ ...styles.toggleBtn, ...(shotCallEnabled ? styles.toggleOn : {}) }} onClick={() => setShotCallEnabled(!shotCallEnabled)}>{shotCallEnabled ? "On" : "Off"}</button>
           </div>
-          <div style={styles.settingHint}>When on, everyone gets one "Call shots!" blast per night — it takes over everyone's screen. Off by default.</div>
           <div style={{ ...styles.settingRow, marginTop: 10 }}>
             <span style={styles.settingLabel}>🚩 Teams</span>
             <div style={styles.toggle}>
@@ -1324,7 +1368,18 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
               ))}
             </div>
           </div>
-          <div style={styles.settingHint}>Split the party into teams. People pick their side; you can reassign anyone. Scored by average drinks per person, so uneven teams stay fair.</div>
+          <div style={styles.settingHint}>Split the party into teams. People pick their side; you can reassign anyone from the My Drinks tab. Scored by average drinks per person, so uneven teams stay fair.</div>
+          {teamCount > 0 && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {TEAM_DEFS.slice(0, teamCount).map((t) => (
+                <div key={t.id} style={styles.teamEditRow}>
+                  <span style={{ ...styles.teamDot, background: t.color }} />
+                  <input style={{ ...styles.input, width: 56, textAlign: "center", padding: "8px 4px" }} value={teams[t.id]?.emoji ?? t.emoji} onChange={(e) => setTeamField(t.id, "emoji", e.target.value)} maxLength={2} />
+                  <input style={{ ...styles.input, flex: 1 }} value={teams[t.id]?.label ?? t.label} onChange={(e) => setTeamField(t.id, "label", e.target.value)} placeholder={t.label} />
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ ...styles.settingRow, marginTop: 10 }}>
             <span style={styles.settingLabel}>🔔 Drink alerts</span>
             <button style={{ ...styles.toggleBtn, ...(drinkNotifs ? styles.toggleOn : {}) }} onClick={() => setDrinkNotifs(!drinkNotifs)}>{drinkNotifs ? "On" : "Off"}</button>
@@ -1446,7 +1501,7 @@ function buildWrappedSlides(people, eventName, event, endT, drinks) {
   ];
   if (totalVomits > 0) slides.splice(5, 0, { kicker: "FOR THE RECORD", big: `🤮 ${totalVomits}`, sub: `casualt${totalVomits === 1 ? "y" : "ies"} on the night. Hydrate, everyone.`, bg: "linear-gradient(160deg,#3a5a2e,#15221a)" });
   if ((event?.settings?.teamCount || 0) > 0) {
-    const ts = teamStats(people, event.settings.teamCount, endT, drinks);
+    const ts = teamStats(people, event.settings, endT, drinks);
     const winner = ts[0];
     if (winner && winner.avg > 0) {
       slides.splice(1, 0, { kicker: "WINNING TEAM", big: `${winner.label}`, sub: `${winner.avg.toFixed(1)} drinks per person · ${winner.total} total`, bg: `linear-gradient(160deg, ${winner.color}, #1a2238)` });

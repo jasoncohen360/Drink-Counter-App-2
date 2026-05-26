@@ -234,7 +234,7 @@ export function useEvent(eventId) {
       const myReactions = reactions.filter((r) => r.chat_id === c.id);
       const byEmoji = {};
       myReactions.forEach((r) => { (byEmoji[r.emoji] = byEmoji[r.emoji] || []).push(r.person_id); });
-      return { id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, t: new Date(c.created_at).getTime(), reactions: byEmoji };
+      return { id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, toPerson: c.to_person || null, t: new Date(c.created_at).getTime(), reactions: byEmoji };
     })
     .sort((a, b) => a.t - b.t);
 
@@ -295,8 +295,8 @@ export function useEvent(eventId) {
     removePerson: async (personId) => {
       await supabase.from("people").delete().eq("id", personId);
     },
-    postChat: async (personId, name, text, imageUrl = null) => {
-      await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text, image_url: imageUrl });
+    postChat: async (personId, name, text, imageUrl = null, toPerson = null) => {
+      await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text, image_url: imageUrl, to_person: toPerson });
     },
     callShots: async (personId, name) => {
       await supabase.from("shot_calls").insert({ event_id: eventId, person_id: personId, name });

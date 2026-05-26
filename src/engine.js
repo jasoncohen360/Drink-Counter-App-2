@@ -165,13 +165,26 @@ export const LINE_COLORS = ["#bfa46a", "#7dd3a0", "#e8a94a", "#d9533b", "#6aa6e8
 
 // Teams: up to 4, each with a name + color. Host enables in settings.
 export const TEAM_DEFS = [
-  { id: "red", label: "Red", color: "#d9533b" },
-  { id: "blue", label: "Blue", color: "#6aa6e8" },
-  { id: "green", label: "Green", color: "#7dd3a0" },
-  { id: "gold", label: "Gold", color: "#e8c95a" },
+  { id: "red", label: "Red", color: "#d9533b", emoji: "🔴" },
+  { id: "blue", label: "Blue", color: "#6aa6e8", emoji: "🔵" },
+  { id: "green", label: "Green", color: "#7dd3a0", emoji: "🟢" },
+  { id: "gold", label: "Gold", color: "#e8c95a", emoji: "🟡" },
 ];
-export function teamStats(people, teamCount, now, drinks) {
-  const active = TEAM_DEFS.slice(0, teamCount);
+// Merge host's custom team names/emojis (settings.teams) over the defaults.
+export function teamList(settings) {
+  const count = (settings && settings.teamCount) || 0;
+  const custom = (settings && settings.teams) || {};
+  return TEAM_DEFS.slice(0, count).map((t) => ({
+    ...t,
+    label: custom[t.id]?.label || t.label,
+    emoji: custom[t.id]?.emoji || t.emoji,
+  }));
+}
+export function teamMeta(settings, teamId) {
+  return teamList(settings).find((t) => t.id === teamId) || null;
+}
+export function teamStats(people, settings, now, drinks) {
+  const active = teamList(settings);
   return active.map((t) => {
     const members = people.filter((p) => p.team === t.id);
     const total = members.reduce((a, p) => a + drinkCountAtTime(p, now), 0);
