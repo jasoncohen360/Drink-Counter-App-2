@@ -945,13 +945,11 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
   // Restored from the original version that worked well: handlers directly on
   // the SVG, mouse + touch, marker shows while dragging and clears on release.
   const svgRef = useRef(null);
-  const [dbg, setDbg] = useState("idle");
   const pointerToTime = (clientX) => {
     const svg = svgRef.current; if (!svg) return null;
     const rect = svg.getBoundingClientRect();
     const px = ((clientX - rect.left) / rect.width) * W;
     const clamped = Math.max(padL, Math.min(W - padR, px));
-    setDbg(`cx=${Math.round(clientX)} L=${Math.round(rect.left)} w=${Math.round(rect.width)} px=${Math.round(px)}`);
     return t0 + ((clamped - padL) / (W - padL - padR)) * span;
   };
   const handleMove = (e) => {
@@ -959,7 +957,8 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
     const t = pointerToTime(clientX);
     if (t != null) setScrubT(t);
   };
-  const endScrub = () => setScrubT(null);
+  // Note: we intentionally do NOT clear on release — so a tap selects a moment
+  // and its stats stay visible until you pick another spot or tap Clear.
 
   return (
     <div style={styles.graphWrap}>
@@ -973,8 +972,8 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
       </div>
       <div style={{ position: "relative" }}>
         <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", touchAction: "none", display: "block", cursor: "crosshair" }}
-          onMouseDown={handleMove} onMouseMove={(e) => e.buttons === 1 && handleMove(e)} onMouseUp={endScrub} onMouseLeave={endScrub}
-          onTouchStart={handleMove} onTouchMove={handleMove} onTouchEnd={endScrub}>
+          onMouseDown={handleMove} onMouseMove={(e) => e.buttons === 1 && handleMove(e)}
+          onTouchStart={handleMove} onTouchMove={handleMove}>
           {[0, 0.25, 0.5, 0.75, 1].map((f, i) => { const gv = maxV * f; return (
             <g key={i}>
               <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
@@ -1005,6 +1004,7 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
           <div style={styles.scrubPanel}>
             <div style={styles.scrubPanelHead}>
               <span>📍 {fmtTime(scrubT)}</span>
+              <button style={styles.scrubClear} onClick={() => setScrubT(null)}>clear</button>
             </div>
             {[...tipData].sort((a, b) => b.v - a.v).map((r) => (
               <div key={r.name} style={styles.tipRow}>
@@ -1018,7 +1018,6 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
       </div>
       <div style={styles.legend}>{series.map((s) => <span key={s.person.id} style={styles.legendItem}><span style={{ ...styles.legendDot, background: s.color }} />{s.person.name}</span>)}</div>
       <div style={styles.scrubHint}>{scrubT != null ? `${metric === "bac" ? "BAC" : "Drinks"} at ${fmtTime(scrubT)}` : "Press and drag across the chart to rewind the night"}</div>
-      <div style={{ fontSize: 9, color: "#5a6078", textAlign: "center", fontFamily: "monospace" }}>debug: {dbg}</div>
     </div>
   );
 }
@@ -1091,7 +1090,7 @@ function ChatBox({ chat, me, people = [], eventId, onPost, onDelete, onReact, no
           const hasRx = Object.values(rx).some((arr) => arr.length > 0);
           return (
             <div key={m.id} style={{ ...styles.bubbleRow, justifyContent: mine ? "flex-end" : "flex-start" }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start", maxWidth: "80%" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start", maxWidth: "92%", minWidth: 0 }}>
                 <div style={{ ...styles.bubble, ...(mine ? styles.bubbleMine : styles.bubbleTheirs) }} onDoubleClick={() => react(m.id, "❤️")}>
                   {!mine && <div style={styles.bubbleName}>{m.name}</div>}
                   {m.imageUrl && <img src={m.imageUrl} alt="" style={styles.bubbleImg} />}

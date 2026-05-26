@@ -291,7 +291,7 @@ export const styles = {
 
   // chat bubbles
   bubbleRow: { display: "flex", width: "100%" },
-  bubble: { maxWidth: "78%", borderRadius: 14, padding: "8px 11px", display: "flex", flexDirection: "column", gap: 3 },
+  bubble: { maxWidth: "100%", borderRadius: 14, padding: "8px 11px", display: "flex", flexDirection: "column", gap: 3 },
   bubbleMine: { background: "#bfa46a", color: "#15182a", borderBottomRightRadius: 4 },
   bubbleTheirs: { background: "rgba(255,255,255,0.08)", color: "#ece3d0", borderBottomLeftRadius: 4 },
   bubbleName: { fontSize: 11, fontWeight: 700, color: "#bfa46a" },
