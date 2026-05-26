@@ -60,12 +60,12 @@ export async function findEventByCode(code) {
 }
 
 // Join an existing event as a new person. Returns the person row.
-export async function joinEvent({ eventId, name, size, sex, weightLb, phone }) {
+export async function joinEvent({ eventId, name, size, sex, weightLb, phone, team }) {
   const { data, error } = await supabase
     .from("people")
     .insert({
       event_id: eventId, name: name || "Guest", phone: phone || null,
-      size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "guest",
+      size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "guest", team: team || null,
     })
     .select()
     .single();
@@ -139,6 +139,7 @@ export function useEvent(eventId) {
   const [people, setPeople] = useState([]);
   const [logs, setLogs] = useState([]); // flat drink_log rows
   const [chat, setChat] = useState([]);
+  const [reactions, setReactions] = useState([]);
   const [shotCalls, setShotCalls] = useState([]);
   const [pendingLogs, setPendingLogs] = useState([]); // optimistic drinks shown instantly
   const [loading, setLoading] = useState(true);
@@ -148,18 +149,20 @@ export function useEvent(eventId) {
   const reload = useCallback(async () => {
     if (!eventId) return;
     try {
-      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }] = await Promise.all([
+      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }, { data: rx }] = await Promise.all([
         supabase.from("events").select("*").eq("id", eventId).single(),
         supabase.from("people").select("*").eq("event_id", eventId),
         supabase.from("drink_log").select("*").eq("event_id", eventId),
         supabase.from("chat").select("*").eq("event_id", eventId),
         supabase.from("shot_calls").select("*").eq("event_id", eventId),
+        supabase.from("reactions").select("*").eq("event_id", eventId),
       ]);
       setEvent(ev || null);
       setPeople(ppl || []);
       setLogs(dl || []);
       setChat(ch || []);
       setShotCalls(sc || []);
+      setReactions(rx || []);
       setError(null);
     } catch (e) {
       setError(e.message || "Failed to load event");
@@ -195,6 +198,8 @@ export function useEvent(eventId) {
         () => supabase.from("chat").select("*").eq("event_id", eventId).then(({ data }) => data && setChat(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "shot_calls", filter: `event_id=eq.${eventId}` },
         () => supabase.from("shot_calls").select("*").eq("event_id", eventId).then(({ data }) => data && setShotCalls(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "reactions", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("reactions").select("*").eq("event_id", eventId).then(({ data }) => data && setReactions(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `id=eq.${eventId}` },
         () => supabase.from("events").select("*").eq("id", eventId).single().then(({ data }) => data && setEvent(data)))
       .subscribe();
@@ -219,12 +224,18 @@ export function useEvent(eventId) {
       sex: p.sex,
       weightLb: p.weight_lb,
       role: p.role,
+      team: p.team || null,
       log: [...realLogs, ...myPending].sort((a, b) => a.t - b.t),
     };
   });
 
   const assembledChat = chat
-    .map((c) => ({ id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, t: new Date(c.created_at).getTime() }))
+    .map((c) => {
+      const myReactions = reactions.filter((r) => r.chat_id === c.id);
+      const byEmoji = {};
+      myReactions.forEach((r) => { (byEmoji[r.emoji] = byEmoji[r.emoji] || []).push(r.person_id); });
+      return { id: c.id, name: c.name, text: c.text, imageUrl: c.image_url || null, personId: c.person_id, t: new Date(c.created_at).getTime(), reactions: byEmoji };
+    })
     .sort((a, b) => a.t - b.t);
 
   const assembledShotCalls = shotCalls
@@ -275,7 +286,11 @@ export function useEvent(eventId) {
       if (fields.size != null) patch.size = fields.size;
       if (fields.sex != null) patch.sex = fields.sex;
       if (fields.weightLb != null) patch.weight_lb = fields.weightLb;
+      if (fields.team !== undefined) patch.team = fields.team;
       await supabase.from("people").update(patch).eq("id", personId);
+    },
+    setTeam: async (personId, team) => {
+      await supabase.from("people").update({ team }).eq("id", personId);
     },
     removePerson: async (personId) => {
       await supabase.from("people").delete().eq("id", personId);
@@ -288,6 +303,13 @@ export function useEvent(eventId) {
     },
     deleteChat: async (chatId) => {
       await supabase.from("chat").delete().eq("id", chatId);
+    },
+    toggleReaction: async (chatId, personId, emoji, alreadyReacted) => {
+      if (alreadyReacted) {
+        await supabase.from("reactions").delete().eq("chat_id", chatId).eq("person_id", personId).eq("emoji", emoji);
+      } else {
+        await supabase.from("reactions").insert({ event_id: eventId, chat_id: chatId, person_id: personId, emoji });
+      }
     },
     saveSettings: async (settings) => {
       await supabase.from("events").update({ settings }).eq("id", eventId);

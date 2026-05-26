@@ -30,6 +30,24 @@ export const styles = {
   inputBig: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(191,164,106,0.35)", borderRadius: 12, padding: "14px 14px", color: "#ece3d0", fontSize: 16, outline: "none", marginBottom: 6 },
   primaryBtn: { marginTop: 12, background: "#bfa46a", border: "none", color: "#15182a", borderRadius: 12, padding: "15px", fontSize: 16, fontWeight: 700, cursor: "pointer" },
   ghostBtn: { background: "none", border: "1px solid rgba(191,164,106,0.4)", color: "#bfa46a", borderRadius: 12, padding: "14px", fontSize: 15, cursor: "pointer" },
+  hostSmallBtn: { background: "none", border: "none", color: "#9aa0b5", fontSize: 13, cursor: "pointer", textDecoration: "underline", padding: "8px", marginTop: 2 },
+  infoDot: { background: "none", border: "none", color: "#bfa46a", fontSize: 13, cursor: "pointer", padding: 0, lineHeight: 1 },
+  infoPop: { position: "absolute", top: "100%", left: 0, marginTop: 6, background: "rgba(12,14,24,0.98)", border: "1px solid rgba(191,164,106,0.5)", borderRadius: 10, padding: "10px 12px", fontSize: 12, lineHeight: 1.5, color: "#ece3d0", width: 230, zIndex: 20, cursor: "pointer", boxShadow: "0 6px 18px rgba(0,0,0,0.5)" },
+
+  teamPickWrap: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(191,164,106,0.22)", borderRadius: 14, padding: 12, display: "flex", flexDirection: "column", gap: 8 },
+  teamPickRow: { display: "flex", gap: 8 },
+  teamPickBtn: { flex: 1, background: "rgba(0,0,0,0.25)", border: "2px solid", borderRadius: 10, padding: "12px 4px", color: "#ece3d0", fontSize: 14, cursor: "pointer" },
+  teamRow: { display: "flex", alignItems: "center", gap: 10, padding: "8px 6px" },
+  teamRowHead: { display: "flex", alignItems: "center", gap: 6, marginBottom: 4 },
+  teamDot: { width: 12, height: 12, borderRadius: 99, flexShrink: 0 },
+  teamName: { fontSize: 14, color: "#f3ead4", fontWeight: 600 },
+  teamMembers: { fontSize: 11, color: "#9aa0b5", marginLeft: 4 },
+  teamBarTrack: { height: 10, background: "rgba(255,255,255,0.06)", borderRadius: 99, overflow: "hidden" },
+  teamBarFill: { height: "100%", borderRadius: 99, transition: "width 0.5s ease" },
+  teamScore: { textAlign: "right", flexShrink: 0 },
+  teamAvg: { fontFamily: SERIF, fontSize: 20, lineHeight: 1 },
+  teamTotal: { fontSize: 10, color: "#6f758c" },
+
   linkBtn: { background: "none", border: "none", color: "#bfa46a", fontSize: 13, cursor: "pointer", textDecoration: "underline" },
 
   codeBox: { fontFamily: SERIF, fontSize: 38, letterSpacing: 8, color: "#f3ead4", textAlign: "center", background: "rgba(0,0,0,0.3)", border: "1px dashed rgba(191,164,106,0.5)", borderRadius: 14, padding: "18px", margin: "4px 0" },
@@ -282,4 +300,16 @@ export const styles = {
   bubbleTime: { fontSize: 9, opacity: 0.6, display: "flex", gap: 8, alignItems: "center" },
   bubbleDel: { background: "none", border: "none", color: "inherit", fontSize: 9, cursor: "pointer", textDecoration: "underline", opacity: 0.8, padding: 0 },
   photoBtn: { background: "rgba(191,164,106,0.12)", border: "1px solid rgba(191,164,106,0.3)", borderRadius: 8, fontSize: 16, cursor: "pointer", padding: "7px 9px", lineHeight: 1 },
+
+  reactBar: { display: "flex", gap: 4, alignItems: "center", marginTop: 3, flexWrap: "wrap", position: "relative" },
+  reactChip: { background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 99, fontSize: 11, cursor: "pointer", padding: "2px 7px", color: "#ece3d0" },
+  reactChipMine: { background: "rgba(191,164,106,0.3)", borderColor: "#bfa46a" },
+  reactAdd: { background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 99, fontSize: 12, cursor: "pointer", padding: "1px 7px", color: "#9aa0b5", lineHeight: 1.3 },
+  reactPicker: { display: "flex", gap: 2, background: "rgba(12,14,24,0.98)", border: "1px solid rgba(191,164,106,0.4)", borderRadius: 99, padding: "3px 6px", position: "absolute", bottom: "100%", marginBottom: 4, zIndex: 10, boxShadow: "0 4px 14px rgba(0,0,0,0.5)" },
+  reactPick: { background: "none", border: "none", fontSize: 18, cursor: "pointer", padding: "2px 3px" },
+
+  qrBox: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "8px 0" },
+  qrImg: { width: 200, height: 200, borderRadius: 12, background: "#fff", padding: 8 },
+  qrCaption: { fontSize: 11, color: "#9aa0b5" },
+  ghostBtnSm: { background: "none", border: "1px solid rgba(191,164,106,0.4)", color: "#bfa46a", borderRadius: 8, padding: "9px 14px", fontSize: 13, cursor: "pointer" },
 };

@@ -162,3 +162,20 @@ export function bestStretchOverall(people, windowMin = 30) {
 
 export const valueAt = (person, t, metric) => (metric === "drinks" ? drinkCountAtTime(person, t) : bacAtTime(person, t));
 export const LINE_COLORS = ["#bfa46a", "#7dd3a0", "#e8a94a", "#d9533b", "#6aa6e8", "#c084d9", "#e8c95a", "#5ad9c0", "#e87aa9", "#9ad97f"];
+
+// Teams: up to 4, each with a name + color. Host enables in settings.
+export const TEAM_DEFS = [
+  { id: "red", label: "Red", color: "#d9533b" },
+  { id: "blue", label: "Blue", color: "#6aa6e8" },
+  { id: "green", label: "Green", color: "#7dd3a0" },
+  { id: "gold", label: "Gold", color: "#e8c95a" },
+];
+export function teamStats(people, teamCount, now, drinks) {
+  const active = TEAM_DEFS.slice(0, teamCount);
+  return active.map((t) => {
+    const members = people.filter((p) => p.team === t.id);
+    const total = members.reduce((a, p) => a + drinkCountAtTime(p, now), 0);
+    const avg = members.length ? total / members.length : 0;
+    return { ...t, members, total, avg };
+  }).sort((a, b) => b.avg - a.avg);
+}
