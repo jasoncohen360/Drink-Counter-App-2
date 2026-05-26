@@ -12,9 +12,12 @@ Supabase → **SQL Editor** → **New query** → paste → **Run**:
 
 ```sql
 alter table shot_calls add column if not exists note text;
+alter table reactions add column if not exists target text;
 ```
 
-"Success" = done. If you haven't created the `shot_calls` table yet (from Stage 5), run that one first.
+"Success" = done. If you haven't created the `shot_calls` or `reactions` tables yet (Stages 5 and 7), run those first.
+
+> The `target` column lets reactions attach to feed items (drinks, milestones, shot calls), not just chat messages.
 
 ---
 

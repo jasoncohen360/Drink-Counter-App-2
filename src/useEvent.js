@@ -311,6 +311,13 @@ export function useEvent(eventId) {
         await supabase.from("reactions").insert({ event_id: eventId, chat_id: chatId, person_id: personId, emoji });
       }
     },
+    toggleFeedReaction: async (target, personId, emoji, alreadyReacted) => {
+      if (alreadyReacted) {
+        await supabase.from("reactions").delete().eq("target", target).eq("person_id", personId).eq("emoji", emoji);
+      } else {
+        await supabase.from("reactions").insert({ event_id: eventId, target, person_id: personId, emoji });
+      }
+    },
     saveSettings: async (settings) => {
       await supabase.from("events").update({ settings }).eq("id", eventId);
     },
@@ -322,6 +329,14 @@ export function useEvent(eventId) {
     },
   };
 
+  // feed reactions grouped by target id: { target: { emoji: [personIds] } }
+  const feedReactions = {};
+  reactions.forEach((r) => {
+    if (!r.target) return;
+    (feedReactions[r.target] = feedReactions[r.target] || {});
+    (feedReactions[r.target][r.emoji] = feedReactions[r.target][r.emoji] || []).push(r.person_id);
+  });
+
   return {
     loading,
     error,
@@ -329,6 +344,7 @@ export function useEvent(eventId) {
     people: assembledPeople,
     chat: assembledChat,
     shotCalls: assembledShotCalls,
+    feedReactions,
     settings: event?.settings || {},
     phase: event?.phase || "live",
     joinCode: event?.join_code || "",
