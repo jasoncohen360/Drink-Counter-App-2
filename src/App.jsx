@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER,
 } from "./engine.js";
 
 // tiny convenience wrappers for team display
@@ -18,6 +18,7 @@ const LS_NAME = "lastcall_name";
 const LS_EVENT = "lastcall_event";
 const LS_PERSON = "lastcall_person";
 const LS_WALKTHROUGH = "lastcall_walkthrough_seen";
+const LS_STARS = "lastcall_stars";
 
 // This phone number always gets host abilities (the app owner). Keys off the
 // phone typed on the welcome screen, so it only applies on devices signed in
@@ -338,7 +339,9 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const legalLimit = getLegalLimit(settings);
 
   const [tab, setTab] = useState("leaderboard");
+  const [showAdd, setShowAdd] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [statsFocusId, setStatsFocusId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [adding, setAdding] = useState(false);
   const [metric, setMetric] = useState("drinks");
@@ -347,6 +350,16 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [chatSeen, setChatSeen] = useState(Date.now());
+  const [stars, setStars] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_STARS) || "[]"); } catch (e) { return []; }
+  });
+  const toggleStar = (pid) => setStars((s) => {
+    const next = s.includes(pid) ? s.filter((x) => x !== pid) : [...s, pid];
+    try { localStorage.setItem(LS_STARS, JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
+  const [banner, setBanner] = useState(null);
+  const bannerQueue = useRef([]);
   const [showWalkthrough, setShowWalkthrough] = useState(() => {
     try { return !localStorage.getItem(LS_WALKTHROUGH); } catch (e) { return false; }
   });
@@ -411,12 +424,65 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     shotRef.current = (shotCalls || []).length;
   }, [shotCalls, shotSeen]);
   const myShotUsed = me && (shotCalls || []).some((s) => s.personId === me.id);
-  const fireShot = () => {
+  const fireShot = (note) => {
     if (!me || myShotUsed) return;
     setShotSeen(Date.now()); // don't pop my own full takeover
-    actions.callShots(me.id, me.name);
-    setToast({ name: "🥃 Shots called!", text: "everyone's screen is lighting up", t: Date.now(), personId: "self" });
+    actions.callShots(me.id, me.name, note || null);
+    setToast({ name: "🥃 Shots called!", text: note ? note : "everyone's screen is lighting up", t: Date.now(), personId: "self" });
   };
+
+  // ---- milestone banners (announce-style, queued) ----
+  const enqueueBanner = (b) => {
+    bannerQueue.current.push(b);
+    if (!banner) {
+      const next = bannerQueue.current.shift();
+      setBanner(next);
+    }
+  };
+  useEffect(() => {
+    if (!banner && bannerQueue.current.length > 0) {
+      setBanner(bannerQueue.current.shift());
+    }
+  }, [banner]);
+  useEffect(() => {
+    if (!banner) return;
+    const id = setTimeout(() => setBanner(null), 5000);
+    return () => clearTimeout(id);
+  }, [banner]);
+
+  // track milestones: per-person 5/10/15..., crossing legal limit, group Boggs
+  const milestoneRef = useRef(null);
+  useEffect(() => {
+    const snapshot = {};
+    let groupTotal = 0;
+    people.forEach((p) => {
+      const n = drinkCountAtTime(p, liveNow);
+      const bac = n ? bacAtTime(p, liveNow, drinksMap) : 0;
+      snapshot[p.id] = { n, drunk: bac >= legalLimit, name: p.name };
+      groupTotal += n;
+    });
+    const prev = milestoneRef.current;
+    if (prev === null) { milestoneRef.current = { per: snapshot, groupTotal, boggs: groupTotal >= BOGGS_NUMBER }; return; }
+    // per-person milestones
+    people.forEach((p) => {
+      const before = prev.per[p.id];
+      const after = snapshot[p.id];
+      if (!before || !after) return;
+      const crossed5or10 = Math.floor(after.n / 5) > Math.floor(before.n / 5) && after.n >= 5;
+      if (crossed5or10) {
+        const tens = after.n % 10 === 0;
+        enqueueBanner({ kind: "milestone", emoji: tens ? "🔥" : "🍻", title: `${after.name} hit ${after.n}!`, sub: tens ? "absolute machine" : "on a roll", personId: p.id });
+      }
+      if (after.drunk && !before.drunk) {
+        enqueueBanner({ kind: "legal", emoji: "🚦", title: `${after.name} is legally drunk`, sub: "officially feeling it", personId: p.id });
+      }
+    });
+    // Boggs group easter egg
+    if (!prev.boggs && groupTotal >= BOGGS_NUMBER) {
+      enqueueBanner({ kind: "boggs", emoji: "🍺", title: `${BOGGS_NUMBER} BEERS`, sub: "You just pulled a Wade Boggs. Legendary.", personId: null, big: true });
+    }
+    milestoneRef.current = { per: snapshot, groupTotal, boggs: groupTotal >= BOGGS_NUMBER };
+  }, [people, liveNow, drinksMap, legalLimit]);
 
   if (showSettings) {
     return <SettingsScreen settings={settings} amHost={amHost}
@@ -435,8 +501,19 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
           <div style={styles.shotGlass}>🥃</div>
           <div style={styles.shotName}>{activeShot.name} is calling</div>
           <div style={styles.shotBig}>SHOTS!</div>
-          <div style={styles.shotSub}>Everyone grab one 🍻</div>
+          {activeShot.note ? <div style={styles.shotWhere}>📍 {activeShot.note}</div> : <div style={styles.shotSub}>Everyone grab one 🍻</div>}
           <button style={styles.shotDismiss} onClick={() => setActiveShot(null)}>I'm in — let's go</button>
+        </div>
+      )}
+
+      {banner && (
+        <div style={{ ...styles.banner, ...(banner.big ? styles.bannerBig : {}) }}
+          onClick={() => { if (banner.personId) { setStatsFocusId(banner.personId); setTab("stats"); } setBanner(null); }}>
+          <span style={styles.bannerEmoji}>{banner.emoji}</span>
+          <div style={styles.bannerTextWrap}>
+            <div style={styles.bannerTitle}>{banner.title}</div>
+            <div style={styles.bannerSub}>{banner.sub}</div>
+          </div>
         </div>
       )}
 
@@ -462,21 +539,21 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
         </div>
       </header>
 
-      <LiveFeed people={people} now={liveNow} drinks={drinksMap} chat={chat} shotCalls={shotCalls} />
-
+      {/* ---- LEADERBOARD TAB ---- */}
       {tab === "leaderboard" && (
         partyDrinks > 0 ? (
           <>
             {(settings.teamCount || 0) > 0 && <TeamStandings people={people} settings={settings} now={liveNow} drinks={drinksMap} />}
-            <Leaderboard people={people} now={liveNow} accent={theme.accent} />
+            <Leaderboard people={people} now={liveNow} accent={theme.accent} stars={stars} toggleStar={toggleStar} />
             <GroupStats people={people} now={liveNow} drinks={drinksMap} />
             <FavoriteDrinksChart people={people} drinks={drinksMap} />
             <TimelineGraph people={people} now={liveNow} metric={metric} setMetric={setMetric} legalLimit={legalLimit} />
           </>
-        ) : <div style={styles.emptyState}>No drinks yet. Head to <b>My Drinks</b> to start logging.</div>
+        ) : <div style={styles.emptyState}>No drinks yet. Tap the <b>＋</b> below to start logging.</div>
       )}
 
-      {tab === "mydrinks" && (
+      {/* ---- STATS TAB (everyone's details, starred first) ---- */}
+      {tab === "stats" && (
         <>
           {(settings.teamCount || 0) > 0 && me && (
             <div style={styles.teamPickWrap}>
@@ -489,54 +566,21 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
               </div>
             </div>
           )}
-          {me && (
-            <PersonCard p={me} now={liveNow} drinks={drinksMap} sizes={sizesMap}
-              expanded={expandedId === me.id} toggleExpand={() => setExpandedId(expandedId === me.id ? null : me.id)}
-              onEdit={() => setEditingId(me.id)} actions={actions} setConfirmVomitId={setConfirmVomitId}
-              canLog />
-          )}
-          {amHost && people.filter((p) => p.id !== myPersonId).length > 0 && (
-            <div style={styles.quickWrap}>
-              <div style={styles.quickTitle}>Quick-add for others (host)</div>
-              {people.filter((p) => p.id !== myPersonId).map((p) => {
-                if (expandedId === p.id) {
-                  return <PersonCard key={p.id} p={p} now={liveNow} drinks={drinksMap} sizes={sizesMap}
-                    expanded toggleExpand={() => setExpandedId(null)} onEdit={() => setEditingId(p.id)}
-                    actions={actions} setConfirmVomitId={setConfirmVomitId} canLog />;
-                }
-                const count = drinkCountAtTime(p, liveNow);
-                const bac = count ? bacAtTime(p, liveNow, drinksMap) : 0;
-                const desc = bacDescriptor(bac);
-                return (
-                  <div key={p.id} style={styles.quickRow}>
-                    <div style={styles.quickInfo} onClick={() => setExpandedId(p.id)}>
-                      <span style={styles.quickName}>{p.name}{p.team && teamLabel(settings, p.team) ? <span style={{ ...styles.teamTag, background: teamColor(settings, p.team) }}>{teamEmoji(settings, p.team)}</span> : null}</span>
-                      <span style={styles.quickMeta}>{count} drink{count === 1 ? "" : "s"} · <span style={{ color: desc.tone }}>{desc.word}</span></span>
-                    </div>
-                    <div style={styles.quickBtns}>
-                      {Object.entries(drinksMap).map(([key, d]) => (
-                        <button key={key} style={styles.quickBtn} onClick={() => actions.addDrink(p.id, key)} title={d.label}>{d.emoji}</button>
-                      ))}
-                      <button style={styles.quickVomit} onClick={() => setConfirmVomitId(p.id)} title="Vomit">🤮</button>
-                      <button style={styles.quickEdit} onClick={() => setExpandedId(p.id)}>⋯</button>
-                    </div>
-                    {(settings.teamCount || 0) > 0 && (
-                      <div style={styles.assignRow}>
-                        <span style={styles.assignLabel}>team:</span>
-                        {teamList(settings).map((t) => (
-                          <button key={t.id} style={{ ...styles.assignChip, borderColor: t.color, ...(p.team === t.id ? { background: t.color, color: "#15182a" } : {}) }}
-                            onClick={() => actions.setTeam(p.id, p.team === t.id ? null : t.id)}>{t.emoji} {t.label}</button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {!amHost && (
-            <div style={styles.guestNote}>Only the host can log drinks for other people. You can log your own above, and see everyone on the Leaderboard.</div>
-          )}
+          {[...people].sort((a, b) => {
+            // me first, then starred, then by drinks
+            if (a.id === myPersonId) return -1; if (b.id === myPersonId) return 1;
+            const as = stars.includes(a.id), bs = stars.includes(b.id);
+            if (as !== bs) return as ? -1 : 1;
+            return drinkCountAtTime(b, liveNow) - drinkCountAtTime(a, liveNow);
+          }).map((p) => (
+            <PersonCard key={p.id} p={p} now={liveNow} drinks={drinksMap} sizes={sizesMap}
+              expanded={expandedId === p.id} toggleExpand={() => setExpandedId(expandedId === p.id ? null : p.id)}
+              onEdit={() => setEditingId(p.id)} actions={actions} setConfirmVomitId={setConfirmVomitId}
+              canLog={p.id === myPersonId || amHost}
+              starred={stars.includes(p.id)} onStar={() => toggleStar(p.id)}
+              isMe={p.id === myPersonId}
+              settings={settings} amHost={amHost} />
+          ))}
           {amHost && (adding ? (
             <PersonForm sizes={sizesMap} onCancel={() => setAdding(false)}
               onSave={(name, size, sex) => { actions.addPerson({ name, size, sex, weightLb: weightFor(size, sex) }); setAdding(false); }} />
@@ -544,23 +588,25 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
         </>
       )}
 
+      {/* ---- FEED TAB ---- */}
+      {tab === "feed" && (
+        <BigFeed people={people} now={liveNow} drinks={drinksMap} chat={chat} shotCalls={shotCalls} onPerson={(pid) => { setStatsFocusId(pid); setTab("stats"); }} />
+      )}
+
+      {/* ---- CHAT TAB ---- */}
       {tab === "chat" && (
         <ChatBox chat={chat} me={me} people={people} eventId={ev.event.id} onPost={(text, imageUrl, toPerson) => me && actions.postChat(me.id, me.name, text, imageUrl, toPerson)} onDelete={actions.deleteChat} onReact={actions.toggleReaction} now={liveNow} />
       )}
 
-      {shotEnabled && me && (
-        <button style={{ ...styles.shotCallBtn, ...(myShotUsed ? styles.shotCallUsed : {}) }} onClick={fireShot} disabled={myShotUsed}>
-          {myShotUsed ? "🥃 You've used your shot call" : "🥃 Call shots! (everyone, once a night)"}
-        </button>
-      )}
-
-      {amHost ? (
-        <button style={styles.endBtn} onClick={() => setConfirmEnd(true)}>🌙 Night's Over</button>
-      ) : (
-        <button style={styles.reset} onClick={onLeave}>Leave this event</button>
-      )}
-
       <p style={styles.disclaimer}>BAC here is a fun estimate, not a real reading — don't make real decisions off it.</p>
+
+      {/* ---- ADD SHEET (center +) ---- */}
+      {showAdd && me && (
+        <AddSheet me={me} now={liveNow} drinks={drinksMap} actions={actions}
+          shotEnabled={shotEnabled} myShotUsed={myShotUsed} onShot={fireShot}
+          onVomit={() => { setConfirmVomitId(me.id); }}
+          onClose={() => setShowAdd(false)} />
+      )}
 
       {editingId && (
         <EditModal person={people.find((p) => p.id === editingId)} sizes={sizesMap}
@@ -590,12 +636,22 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
           </>} />
       )}
 
+      {amHost && tab === "leaderboard" && (
+        <button style={styles.endBtnSmall} onClick={() => setConfirmEnd(true)}>🌙 Night's Over</button>
+      )}
+
+      {/* ---- BOTTOM TAB BAR with center + ---- */}
       <div style={styles.tabBarFixed}>
         <div style={styles.tabBarInner}>
-          {[{ key: "leaderboard", icon: "🏆", name: "Leaderboard" }, { key: "mydrinks", icon: "🍸", name: "My Drinks" }, { key: "chat", icon: "💬", name: "Chat" }].map((t) => (
+          {[{ key: "leaderboard", icon: "🏆", name: "Board" }, { key: "stats", icon: "📊", name: "Stats" }].map((t) => (
             <button key={t.key} style={{ ...styles.tab, ...(tab === t.key ? { ...styles.tabOn, borderColor: theme.accent, color: theme.accent } : {}) }} onClick={() => openTab(t.key)}>
-              <span style={styles.tabIcon}>{t.icon}</span>
-              <span style={styles.tabName}>{t.name}</span>
+              <span style={styles.tabIcon}>{t.icon}</span><span style={styles.tabName}>{t.name}</span>
+            </button>
+          ))}
+          <button style={{ ...styles.plusTab, background: theme.accent }} onClick={() => setShowAdd(true)} aria-label="Add a drink">＋</button>
+          {[{ key: "feed", icon: "📣", name: "Feed" }, { key: "chat", icon: "💬", name: "Chat" }].map((t) => (
+            <button key={t.key} style={{ ...styles.tab, ...(tab === t.key ? { ...styles.tabOn, borderColor: theme.accent, color: theme.accent } : {}) }} onClick={() => openTab(t.key)}>
+              <span style={styles.tabIcon}>{t.icon}</span><span style={styles.tabName}>{t.name}</span>
               {t.key === "chat" && unreadChat > 0 && <span style={styles.tabBadge}>{unreadChat}</span>}
             </button>
           ))}
@@ -724,7 +780,7 @@ function TeamStandings({ people, settings, now, drinks }) {
 // ============================================================
 // LEADERBOARD
 // ============================================================
-function Leaderboard({ people, now, accent }) {
+function Leaderboard({ people, now, accent, stars = [], toggleStar }) {
   const rows = [...people].map((p) => ({ p, n: drinkCountAtTime(p, now), bac: bacAtTime(p, now) })).sort((a, b) => b.n - a.n || b.bac - a.bac);
   const medals = ["🥇", "🥈", "🥉"];
   return (
@@ -732,9 +788,11 @@ function Leaderboard({ people, now, accent }) {
       <div style={styles.lbTitle}>Leaderboard</div>
       {rows.map((r, i) => {
         const desc = bacDescriptor(r.bac);
+        const starred = stars.includes(r.p.id);
         return (
           <div key={r.p.id} style={{ ...styles.lbRow, ...(i === 0 && r.n > 0 ? { background: "rgba(191,164,106,0.08)" } : {}) }}>
             <span style={styles.lbRank}>{i < 3 && r.n > 0 ? medals[i] : i + 1}</span>
+            <button style={styles.starBtn} onClick={() => toggleStar && toggleStar(r.p.id)} title={starred ? "Unfollow" : "Follow"}>{starred ? "⭐" : "☆"}</button>
             <div style={styles.lbName}>
               <span>{r.p.name}{r.p.role === "host" && <span style={styles.hostTag}>HOST</span>}</span>
               <span style={{ ...styles.lbDesc, color: desc.tone }}>{desc.word}</span>
@@ -801,7 +859,7 @@ function FavoriteDrinksChart({ people, drinks = DRINKS }) {
 // ============================================================
 // PERSON CARD + INDIVIDUAL STATS
 // ============================================================
-function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleExpand, onEdit, actions, setConfirmVomitId, canLog = false }) {
+function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleExpand, onEdit, actions, setConfirmVomitId, canLog = false, starred = false, onStar, isMe = false, settings = {}, amHost = false }) {
   const count = drinkCountAtTime(p, now);
   const bac = count ? bacAtTime(p, now, drinks) : 0;
   const desc = bacDescriptor(bac);
@@ -812,18 +870,31 @@ function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleEx
   const tally = {};
   p.log.forEach((d) => { if (d.type !== "vomit") tally[d.type] = (tally[d.type] || 0) + 1; });
   const dd = (k) => drinks[k] || DRINKS[k] || { emoji: "🍸", label: "drink" };
+  const teamsOn = (settings.teamCount || 0) > 0;
   return (
-    <div style={styles.card}>
+    <div style={{ ...styles.card, ...(isMe ? { borderColor: "rgba(191,164,106,0.5)" } : {}) }}>
       <div style={styles.cardTop}>
-        <div>
+        <div style={{ flex: 1 }}>
           <div style={{ ...styles.name, cursor: "pointer" }} onClick={toggleExpand}>
-            {p.name}{p.role === "host" && <span style={styles.hostTag}>HOST</span>}<span style={styles.expandCaret}>{expanded ? "▾" : "›"}</span>
+            {!isMe && onStar && <button style={styles.starBtnSm} onClick={(e) => { e.stopPropagation(); onStar(); }}>{starred ? "⭐" : "☆"}</button>}
+            {p.name}{isMe && <span style={styles.youTag}>YOU</span>}{p.role === "host" && <span style={styles.hostTag}>HOST</span>}
+            {teamsOn && p.team && teamLabel(settings, p.team) ? <span style={{ ...styles.teamTag, background: teamColor(settings, p.team) }}>{teamEmoji(settings, p.team)} {teamLabel(settings, p.team)}</span> : null}
+            <span style={styles.expandCaret}>{expanded ? "▾" : "›"}</span>
           </div>
           <div style={styles.bodyline}>
             {(sizes[p.size]?.label) || "Medium"} · {p.sex}
             {vomits > 0 && <span style={styles.vomitTag}> · 🤮 ×{vomits}</span>}
             <button style={styles.editBtn} onClick={onEdit}>edit</button>
           </div>
+          {teamsOn && amHost && (
+            <div style={styles.assignRow}>
+              <span style={styles.assignLabel}>team:</span>
+              {teamList(settings).map((t) => (
+                <button key={t.id} style={{ ...styles.assignChip, borderColor: t.color, ...(p.team === t.id ? { background: t.color, color: "#15182a" } : {}) }}
+                  onClick={() => actions.setTeam(p.id, p.team === t.id ? null : t.id)}>{t.emoji} {t.label}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div style={styles.bacBlock}>
           <div style={{ ...styles.bacWord, color: desc.tone }}>{desc.word}</div>
@@ -1188,6 +1259,97 @@ function WalkthroughModal({ onClose, shotEnabled, teamsOn }) {
 }
 
 // ============================================================
+// ADD SHEET (center + → roll-up overlay for logging)
+// ============================================================
+function AddSheet({ me, now, drinks = DRINKS, actions, shotEnabled, myShotUsed, onShot, onVomit, onClose }) {
+  const count = drinkCountAtTime(me, now);
+  const bac = count ? bacAtTime(me, now, drinks) : 0;
+  const desc = bacDescriptor(bac);
+  const [flash, setFlash] = useState(null);
+  const [showShot, setShowShot] = useState(false);
+  const [shotNote, setShotNote] = useState("");
+
+  const logIt = (key) => {
+    actions.addDrink(me.id, key);
+    const d = drinks[key] || { emoji: "🍸", label: "drink" };
+    setFlash(d.emoji);
+    setTimeout(() => setFlash(null), 700);
+  };
+
+  return (
+    <div style={styles.sheetBg} onClick={onClose}>
+      <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.sheetHandle} />
+        <div style={styles.sheetStat}>
+          <span style={styles.sheetCount}>{count}</span>
+          <span style={styles.sheetCountLabel}>drink{count === 1 ? "" : "s"} · <span style={{ color: desc.tone }}>{desc.word}</span></span>
+          <span style={styles.sheetBac}>~{bac.toFixed(3)} BAC</span>
+        </div>
+        {flash && <div style={styles.sheetFlash}>{flash}</div>}
+        <div style={styles.sheetGrid}>
+          {Object.entries(drinks).map(([key, d]) => (
+            <button key={key} style={styles.sheetDrink} onClick={() => logIt(key)}>
+              <span style={styles.sheetDrinkEmoji}>{d.emoji}</span>
+              <span style={styles.sheetDrinkLabel}>{d.label}</span>
+            </button>
+          ))}
+        </div>
+        <div style={styles.sheetRow}>
+          <button style={styles.sheetVomit} onClick={() => { onVomit(); onClose(); }}>🤮 Vomit</button>
+          {shotEnabled && (
+            myShotUsed
+              ? <button style={{ ...styles.sheetShot, opacity: 0.5 }} disabled>🥃 Shot used</button>
+              : <button style={styles.sheetShot} onClick={() => setShowShot(true)}>🥃 Call shots</button>
+          )}
+        </div>
+        {showShot && (
+          <div style={styles.shotComposer}>
+            <input style={styles.chatInput} placeholder="where? (optional, e.g. back bar)" value={shotNote} onChange={(e) => setShotNote(e.target.value)} maxLength={40} />
+            <button style={styles.chatSend} onClick={() => { onShot(shotNote.trim()); setShowShot(false); onClose(); }}>Send it 🥃</button>
+          </div>
+        )}
+        <button style={styles.sheetClose} onClick={onClose}>Done</button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// BIG FEED (full tab — social wall)
+// ============================================================
+function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], onPerson }) {
+  const events = [];
+  people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name, personId: p.id })));
+  chat.forEach((m) => { if (!m.toPerson) events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl, personId: m.personId }); });
+  shotCalls.forEach((s) => events.push({ kind: "shot", t: s.t, name: s.name, note: s.note, personId: s.personId }));
+  events.sort((a, b) => b.t - a.t);
+
+  const row = (e, i) => {
+    const mins = Math.round((now - e.t) / 60000);
+    const ago = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago`;
+    let icon, text;
+    if (e.kind === "shot") { icon = "🥃"; text = `${e.name} called shots!${e.note ? " — " + e.note : ""}`; }
+    else if (e.kind === "chat") { icon = e.imageUrl && !e.text ? "📷" : "💬"; text = e.imageUrl && !e.text ? `${e.name} sent a photo` : `${e.name}: ${e.text}`; }
+    else if (e.type === "vomit") { icon = "🤮"; text = `${e.name} had a rough moment`; }
+    else { const d = drinks[e.type] || { emoji: "🍸", label: "drink" }; const sz = POUR[e.pour || "M"].label; icon = d.emoji; text = `${e.name} had a ${sz === "M" ? "" : sz + " "}${d.label.toLowerCase()}`; }
+    return (
+      <div key={i} style={styles.bigFeedRow} onClick={() => e.personId && onPerson && onPerson(e.personId)}>
+        <span style={styles.bigFeedIcon}>{icon}</span>
+        <span style={styles.bigFeedText}>{text}</span>
+        <span style={styles.bigFeedAgo}>{ago}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div style={styles.bigFeedWrap}>
+      <div style={styles.bigFeedHead}><span style={styles.feedDot} /> THE NIGHT, LIVE</div>
+      {events.length === 0 ? <div style={styles.feedVEmpty}>Nothing yet — tap ＋ to log the first drink.</div> : events.map(row)}
+    </div>
+  );
+}
+
+// ============================================================
 // SUGGESTION BOX (everyone can submit; developer can read)
 // ============================================================
 function SuggestionBox() {
@@ -1505,9 +1667,13 @@ function buildWrappedSlides(people, eventName, event, endT, drinks) {
   if (totalVomits > 0) slides.splice(5, 0, { kicker: "FOR THE RECORD", big: `🤮 ${totalVomits}`, sub: `casualt${totalVomits === 1 ? "y" : "ies"} on the night. Hydrate, everyone.`, bg: "linear-gradient(160deg,#3a5a2e,#15221a)" });
   if ((event?.settings?.teamCount || 0) > 0) {
     const ts = teamStats(people, event.settings, endT, drinks);
-    const winner = ts[0];
-    if (winner && winner.avg > 0) {
-      slides.splice(1, 0, { kicker: "WINNING TEAM", big: `${winner.label}`, sub: `${winner.avg.toFixed(1)} drinks per person · ${winner.total} total`, bg: `linear-gradient(160deg, ${winner.color}, #1a2238)` });
+    const ranked = ts.filter((t) => t.members.length > 0);
+    if (ranked.length > 0 && ranked[0].avg > 0) {
+      const winner = ranked[0];
+      // headline winner slide
+      slides.splice(1, 0, { kicker: "WINNING TEAM", big: `${winner.emoji} ${winner.label}`, sub: `${winner.avg.toFixed(1)} per person · ${winner.total} total`, bg: `linear-gradient(160deg, ${winner.color}, #1a2238)` });
+      // full standings slide right after it
+      slides.splice(2, 0, { kicker: "TEAM STANDINGS", big: "", list: ranked.map((t) => ({ name: `${t.emoji} ${t.label}`, val: `${t.avg.toFixed(1)}/person · ${t.total}` })), bg: "linear-gradient(160deg,#2a3b5a,#15182a)" });
     }
   }
   return slides;
@@ -1524,6 +1690,7 @@ function DetailView({ ev, endT, drinks, onBack, onReopen, onLeave }) {
         <button style={styles.linkBtn} onClick={onBack}>‹ Back to recap</button>
         <div style={styles.kicker}>{eventName.toUpperCase()} · FINAL</div>
       </header>
+      {(settings.teamCount || 0) > 0 && <TeamStandings people={people} settings={settings} now={endT} drinks={drinks} />}
       <Leaderboard people={people} now={endT} accent={getTheme(settings).accent} />
       <GroupStats people={people} now={endT} drinks={drinks} />
       <FavoriteDrinksChart people={people} drinks={drinks} />

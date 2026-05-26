@@ -192,3 +192,6 @@ export function teamStats(people, settings, now, drinks) {
     return { ...t, members, total, avg };
   }).sort((a, b) => b.avg - a.avg);
 }
+
+// The legend: Wade Boggs and a flight's worth of beers.
+export const BOGGS_NUMBER = 107;

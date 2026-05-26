@@ -239,7 +239,7 @@ export function useEvent(eventId) {
     .sort((a, b) => a.t - b.t);
 
   const assembledShotCalls = shotCalls
-    .map((s) => ({ id: s.id, name: s.name, personId: s.person_id, t: new Date(s.created_at).getTime() }))
+    .map((s) => ({ id: s.id, name: s.name, personId: s.person_id, note: s.note || null, t: new Date(s.created_at).getTime() }))
     .sort((a, b) => a.t - b.t);
 
   // ---- actions (optimistic-free; realtime brings the update back) ----
@@ -298,8 +298,8 @@ export function useEvent(eventId) {
     postChat: async (personId, name, text, imageUrl = null, toPerson = null) => {
       await supabase.from("chat").insert({ event_id: eventId, person_id: personId, name, text, image_url: imageUrl, to_person: toPerson });
     },
-    callShots: async (personId, name) => {
-      await supabase.from("shot_calls").insert({ event_id: eventId, person_id: personId, name });
+    callShots: async (personId, name, note = null) => {
+      await supabase.from("shot_calls").insert({ event_id: eventId, person_id: personId, name, note });
     },
     deleteChat: async (chatId) => {
       await supabase.from("chat").delete().eq("id", chatId);

@@ -12,6 +12,9 @@ export const GLOBAL_CSS = `
   @keyframes shotPop { 0% { transform: scale(0.3); opacity: 0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
   @keyframes shotShake { 0%,100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
   @keyframes shotBgPulse { 0%,100% { background: rgba(120,30,20,0.96); } 50% { background: rgba(160,50,30,0.96); } }
+  @keyframes bannerIn { from { transform: translateY(-80px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes flashPop { 0% { transform: scale(0.4); opacity: 0; } 35% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
 `;
 
 export const styles = {
@@ -323,4 +326,44 @@ export const styles = {
   assignLabel: { fontSize: 11, color: "#9aa0b5" },
   assignChip: { background: "rgba(0,0,0,0.25)", border: "1px solid", borderRadius: 99, fontSize: 12, cursor: "pointer", padding: "3px 9px", color: "#ece3d0" },
   teamEditRow: { display: "flex", gap: 8, alignItems: "center" },
+
+  starBtn: { background: "none", border: "none", color: "#e8c95a", fontSize: 18, cursor: "pointer", padding: "0 4px", lineHeight: 1 },
+  starBtnSm: { background: "none", border: "none", color: "#e8c95a", fontSize: 15, cursor: "pointer", padding: "0 4px 0 0", lineHeight: 1 },
+  youTag: { fontSize: 10, background: "rgba(191,164,106,0.3)", color: "#f3ead4", borderRadius: 5, padding: "1px 5px", marginLeft: 6, verticalAlign: "middle" },
+
+  plusTab: { width: 52, height: 52, borderRadius: 99, border: "none", color: "#15182a", fontSize: 30, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", marginTop: -16, boxShadow: "0 4px 14px rgba(0,0,0,0.4)", lineHeight: 1, flexShrink: 0 },
+  endBtnSmall: { display: "block", margin: "16px auto 90px", background: "none", border: "1px solid rgba(255,255,255,0.15)", color: "#9aa0b5", borderRadius: 10, padding: "10px 18px", fontSize: 13, cursor: "pointer" },
+
+  banner: { position: "fixed", top: 10, left: 10, right: 10, zIndex: 90, background: "linear-gradient(100deg,#2a2f48,#3a4068)", border: "1px solid rgba(191,164,106,0.5)", borderRadius: 14, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", cursor: "pointer", animation: "bannerIn 0.35s ease" },
+  bannerBig: { background: "linear-gradient(110deg,#7a3b1e,#c0392b,#e8c95a)", border: "2px solid #f3ead4", padding: "18px 16px" },
+  bannerEmoji: { fontSize: 32, flexShrink: 0 },
+  bannerTextWrap: { flex: 1, minWidth: 0 },
+  bannerTitle: { fontFamily: SERIF, fontSize: 18, fontWeight: 700, color: "#fff" },
+  bannerSub: { fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 1 },
+
+  sheetBg: { position: "fixed", inset: 0, zIndex: 95, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end" },
+  sheet: { width: "100%", maxHeight: "85vh", overflowY: "auto", background: "linear-gradient(180deg,#1c2036,#15182a)", borderRadius: "22px 22px 0 0", border: "1px solid rgba(191,164,106,0.3)", borderBottom: "none", padding: "10px 18px 28px", animation: "sheetUp 0.3s ease" },
+  sheetHandle: { width: 40, height: 4, borderRadius: 99, background: "rgba(255,255,255,0.25)", margin: "4px auto 14px" },
+  sheetStat: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, marginBottom: 14 },
+  sheetCount: { fontFamily: SERIF, fontSize: 52, fontWeight: 700, color: "#f3ead4", lineHeight: 1 },
+  sheetCountLabel: { fontSize: 13, color: "#9aa0b5" },
+  sheetBac: { fontSize: 12, color: "#6f758c", marginTop: 2 },
+  sheetFlash: { position: "fixed", top: "38%", left: 0, right: 0, textAlign: "center", fontSize: 90, zIndex: 99, pointerEvents: "none", animation: "flashPop 0.7s ease forwards" },
+  sheetGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 },
+  sheetDrink: { background: "rgba(191,164,106,0.12)", border: "1px solid rgba(191,164,106,0.3)", borderRadius: 14, padding: "16px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer" },
+  sheetDrinkEmoji: { fontSize: 30 },
+  sheetDrinkLabel: { fontSize: 13, color: "#ece3d0" },
+  sheetRow: { display: "flex", gap: 10, marginBottom: 6 },
+  sheetVomit: { flex: 1, background: "rgba(120,60,40,0.25)", border: "1px solid rgba(200,120,80,0.3)", color: "#e0a070", borderRadius: 12, padding: "12px", fontSize: 14, cursor: "pointer" },
+  sheetShot: { flex: 1, background: "linear-gradient(100deg,#7a3b1e,#a8502e)", border: "1px solid rgba(255,180,120,0.4)", color: "#fff", borderRadius: 12, padding: "12px", fontSize: 14, fontWeight: 600, cursor: "pointer" },
+  shotComposer: { display: "flex", gap: 6, marginTop: 8 },
+  sheetClose: { width: "100%", marginTop: 12, background: "none", border: "1px solid rgba(255,255,255,0.15)", color: "#9aa0b5", borderRadius: 12, padding: "12px", fontSize: 14, cursor: "pointer" },
+
+  bigFeedWrap: { display: "flex", flexDirection: "column", gap: 2, paddingBottom: 80 },
+  bigFeedHead: { fontFamily: SERIF, fontSize: 13, letterSpacing: 1, color: "#9aa0b5", display: "flex", alignItems: "center", gap: 7, padding: "4px 4px 10px" },
+  bigFeedRow: { display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 10, cursor: "pointer" },
+  bigFeedIcon: { fontSize: 20, flexShrink: 0 },
+  bigFeedText: { flex: 1, fontSize: 14, color: "#ece3d0" },
+  bigFeedAgo: { fontSize: 11, color: "#6f758c", flexShrink: 0 },
+  shotWhere: { fontSize: 22, color: "#fff", fontWeight: 700, background: "rgba(0,0,0,0.25)", borderRadius: 10, padding: "6px 16px", marginTop: 4 },
 };
