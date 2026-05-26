@@ -362,8 +362,12 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   useEffect(() => {
     if (chat.length > lastChatRef.current) {
       const newest = chat[chat.length - 1];
-      if (newest && (!me || newest.personId !== me.id)) {
-        setToast(newest);
+      // only toast messages I'm allowed to see: public, or a private message addressed to me
+      const visibleToMe = newest && (!newest.toPerson || (me && newest.toPerson === me.id));
+      const fromSomeoneElse = newest && (!me || newest.personId !== me.id);
+      if (visibleToMe && fromSomeoneElse) {
+        const isDM = newest.toPerson && me && newest.toPerson === me.id;
+        setToast(isDM ? { ...newest, name: "🔒 " + newest.name } : newest);
         const id = setTimeout(() => setToast(null), 4000);
         lastChatRef.current = chat.length;
         return () => clearTimeout(id);
@@ -372,7 +376,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     lastChatRef.current = chat.length;
   }, [chat, me]);
 
-  const unreadChat = chat.filter((m) => m.t > chatSeen).length;
+  const unreadChat = chat.filter((m) => m.t > chatSeen && (!m.toPerson || (me && (m.toPerson === me.id || m.personId === me.id)))).length;
   const openTab = (t) => { if (t === "chat") setChatSeen(Date.now()); setTab(t); };
   const partyDrinks = people.reduce((a, p) => a + drinkCountAtTime(p, liveNow), 0);
 
@@ -649,7 +653,7 @@ function ShareModal({ joinCode, onClose }) {
 function LiveFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [] }) {
   const events = [];
   people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name })));
-  chat.forEach((m) => events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl }));
+  chat.forEach((m) => { if (!m.toPerson) events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl }); });
   shotCalls.forEach((s) => events.push({ kind: "shot", t: s.t, name: s.name }));
   events.sort((a, b) => b.t - a.t);
 
