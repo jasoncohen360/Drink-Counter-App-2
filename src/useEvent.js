@@ -212,7 +212,7 @@ export function useEvent(eventId) {
   const assembledPeople = people.map((p) => {
     const realLogs = logs
       .filter((l) => l.person_id === p.id)
-      .map((l) => ({ type: l.type, pour: l.pour, t: new Date(l.t).getTime(), _id: l.id }));
+      .map((l) => ({ type: l.type, pour: l.pour, t: new Date(l.t).getTime(), _id: l.id, imageUrl: l.image_url || null }));
     const myPending = pendingLogs
       .filter((pl) => pl.person_id === p.id)
       .map((pl) => ({ type: pl.type, pour: pl.pour, t: pl._localT, _id: pl._id, _pending: true }));
@@ -248,6 +248,12 @@ export function useEvent(eventId) {
       const localId = "pending_" + Math.random().toString(36).slice(2);
       setPendingLogs((pend) => [...pend, { _id: localId, _localT: Date.now(), person_id: personId, type, pour: "M" }]);
       await supabase.from("drink_log").insert({ person_id: personId, event_id: eventId, type, pour: "M" });
+    },
+    attachDrinkPhoto: async (logId, file) => {
+      if (String(logId).startsWith("pending_")) return; // wait until it lands
+      const url = await uploadChatPhoto(eventId, file);
+      await supabase.from("drink_log").update({ image_url: url }).eq("id", logId);
+      return url;
     },
     addVomit: async (personId) => {
       const localId = "pending_" + Math.random().toString(36).slice(2);

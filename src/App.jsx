@@ -376,6 +376,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const me = people.find((p) => p.id === myPersonId);
   const myPhone = (typeof localStorage !== "undefined" && localStorage.getItem(LS_PHONE)) || "";
   const amHost = me?.role === "host" || (myPhone && myPhone === DEVELOPER_PHONE);
+  const isDeveloper = myPhone && myPhone === DEVELOPER_PHONE;
 
   // pop a toast when a new chat arrives from someone else
   useEffect(() => {
@@ -410,7 +411,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     if (!newest) return;
     const key = newest.name + ":" + newest.t + ":" + newest.type;
     if (lastDrinkRef.current === null) { lastDrinkRef.current = key; return; } // skip first load
-    if (key !== lastDrinkRef.current && Date.now() - newest.t < 15000) {
+    if (key !== lastDrinkRef.current && Date.now() - newest.t < 15000 && !(me && newestPid === me.id)) {
       if (newest.type === "vomit") {
         setToast({ name: `🤮 ${newest.name}`, text: "had a rough moment", t: Date.now(), personId: newestPid, goStats: true });
       } else if (drinkNotifsOn) {
@@ -419,26 +420,28 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       }
     }
     lastDrinkRef.current = key;
-  }, [people, drinkNotifsOn]);
+  }, [people, drinkNotifsOn, me]);
 
-  // shot call: show a full-screen takeover for any call we haven't seen yet
+  // shot call: show a full-screen takeover for any new call (including my own)
   const shotEnabled = settings.shotCallEnabled !== false;
-  const [shotSeen, setShotSeen] = useState(Date.now());
   const [activeShot, setActiveShot] = useState(null);
   const shotRef = useRef((shotCalls || []).length);
   useEffect(() => {
     if ((shotCalls || []).length > shotRef.current) {
       const newest = shotCalls[shotCalls.length - 1];
-      if (newest && newest.t > shotSeen) setActiveShot(newest);
+      if (newest) {
+        setActiveShot(newest);
+        // if I'm the caller, auto-count me in so I never tap "I'm in"
+        if (me && newest.personId === me.id) actions.postChat(me.id, me.name, `__shotin__${newest.id}`, null, null);
+      }
     }
     shotRef.current = (shotCalls || []).length;
-  }, [shotCalls, shotSeen]);
+  }, [shotCalls]);
   const myShotUsed = me && (shotCalls || []).some((s) => s.personId === me.id);
   const fireShot = (note) => {
-    if (!me || myShotUsed) return;
-    setShotSeen(Date.now()); // don't pop my own full takeover
+    if (!me) return;
+    if (myShotUsed && !isDeveloper) return;
     actions.callShots(me.id, me.name, note || null);
-    setToast({ name: "🥃 Shots called!", text: note ? note : "everyone's screen is lighting up", t: Date.now(), personId: "self" });
   };
 
   // notify me when someone reacts to one of my feed items
@@ -536,20 +539,29 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
 
       {showWalkthrough && <WalkthroughModal onClose={dismissWalkthrough} shotEnabled={settings.shotCallEnabled !== false} teamsOn={(settings.teamCount || 0) > 0} />}
 
-      {activeShot && (
-        <div style={styles.shotOverlay}>
-          <div style={styles.shotGlass}>🥃</div>
-          <div style={styles.shotName}>{activeShot.name} is calling</div>
-          <div style={styles.shotBig}>SHOTS!</div>
-          {activeShot.note ? <div style={styles.shotWhere}>📍 {activeShot.note}</div> : <div style={styles.shotSub}>Everyone grab one 🍻</div>}
-          {(() => {
-            const ins = (chat || []).filter((m) => m.toPerson === null && m.text === `__shotin__${activeShot.id}`);
-            return ins.length > 0 ? <div style={styles.shotTally}>🍻 {ins.map((m) => m.name).join(", ")} {ins.length === 1 ? "is" : "are"} in</div> : null;
-          })()}
-          <button style={styles.shotDismiss} onClick={() => { if (me) actions.postChat(me.id, me.name, `__shotin__${activeShot.id}`, null, null); setActiveShot(null); }}>I'm in 🥃</button>
-          <button style={styles.shotDecline} onClick={() => setActiveShot(null)}>Nah, I'm good</button>
-        </div>
-      )}
+      {activeShot && (() => {
+        const amCaller = me && activeShot.personId === me.id;
+        const ins = (chat || []).filter((m) => m.toPerson === null && m.text === `__shotin__${activeShot.id}`);
+        const names = [...new Set(ins.map((m) => m.name))];
+        const iAmIn = me && ins.some((m) => m.personId === me.id);
+        return (
+          <div style={styles.shotOverlay}>
+            <div style={styles.shotGlass}>🥃</div>
+            <div style={styles.shotName}>{amCaller ? "You called" : `${activeShot.name} is calling`}</div>
+            <div style={styles.shotBig}>SHOTS!</div>
+            {activeShot.note ? <div style={styles.shotWhere}>📍 {activeShot.note}</div> : <div style={styles.shotSub}>Everyone grab one 🍻</div>}
+            {names.length > 0 && <div style={styles.shotTally}>🍻 {names.join(", ")} {names.length === 1 ? "is" : "are"} in</div>}
+            {amCaller ? (
+              <button style={styles.shotDismiss} onClick={() => setActiveShot(null)}>Let's go 🥃</button>
+            ) : (
+              <>
+                {!iAmIn && <button style={styles.shotDismiss} onClick={() => { if (me) actions.postChat(me.id, me.name, `__shotin__${activeShot.id}`, null, null); }}>I'm in 🥃</button>}
+                <button style={styles.shotDecline} onClick={() => setActiveShot(null)}>{iAmIn ? "Close" : "Nah, I'm good"}</button>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {banner && (
         <div style={{ ...styles.banner, ...(banner.big ? styles.bannerBig : {}) }}
@@ -655,7 +667,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       {/* ---- ADD SHEET (center +) ---- */}
       {showAdd && me && (
         <AddSheet me={me} people={people} now={liveNow} drinks={drinksMap} actions={actions}
-          shotEnabled={shotEnabled} myShotUsed={myShotUsed} onShot={fireShot}
+          shotEnabled={shotEnabled} myShotUsed={myShotUsed && !isDeveloper} onShot={fireShot}
           onVomit={() => { setConfirmVomitId(me.id); }}
           onClose={() => setShowAdd(false)} />
       )}
@@ -1328,6 +1340,7 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
   const bac = count ? bacAtTime(me, now, drinks) : 0;
   const desc = bacDescriptor(bac);
   const [flash, setFlash] = useState(null);
+  const [justLogged, setJustLogged] = useState(false);
   const [showShot, setShowShot] = useState(false);
   const [shotNote, setShotNote] = useState("");
   const ranked = [...people].map((p) => ({ id: p.id, n: drinkCountAtTime(p, now) })).sort((a, b) => b.n - a.n);
@@ -1340,7 +1353,18 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
     actions.addDrink(me.id, key);
     const d = drinks[key] || { emoji: "🍸", label: "drink" };
     setFlash(d.emoji);
+    setJustLogged(true);
     setTimeout(() => setFlash(null), 700);
+  };
+  const photoRef = useRef(null);
+  const onEmptyPic = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // attach to my most recent landed (non-pending) drink
+    const landed = me.log.filter((l) => l.type !== "vomit" && !l._pending).sort((a, b) => b.t - a.t)[0];
+    if (!landed) { alert("Give it a second for the drink to save, then try the photo again."); return; }
+    try { await actions.attachDrinkPhoto(landed._id, file); setJustLogged(false); } catch (err) { alert("Photo upload failed: " + (err.message || "")); }
+    if (photoRef.current) photoRef.current.value = "";
   };
 
   return (
@@ -1353,7 +1377,13 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
           <span style={styles.sheetBac}>~{bac.toFixed(3)} BAC{count > 0 && people.length > 1 ? ` · ${ord(place)} place` : ""}</span>
           {count > 0 && <div style={styles.sheetTally}>{Object.entries(tally).map(([t, n]) => <span key={t} style={styles.sheetTallyItem}>{(drinks[t] || { emoji: "🍸" }).emoji} {n}</span>)}</div>}
         </div>
-        {flash && <div style={styles.sheetFlash}>{flash}</div>}
+        {flash && (
+          <div style={styles.sheetFlashWrap}>
+            <div style={styles.sheetFlashRing} />
+            <div style={styles.sheetFlash}>{flash}</div>
+            <div style={styles.sheetFlashTxt}>+1 🎉</div>
+          </div>
+        )}
         <div style={styles.sheetGrid}>
           {Object.entries(drinks).map(([key, d]) => (
             <button key={key} style={styles.sheetDrink} onClick={() => logIt(key)}>
@@ -1362,6 +1392,13 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
             </button>
           ))}
         </div>
+        {justLogged && (
+          <div style={styles.emptyPicPrompt}>
+            <span style={styles.emptyPicText}>Nice. Want to snap the empty? (optional)</span>
+            <button style={styles.emptyPicBtn} onClick={() => photoRef.current?.click()}>📷 Add pic</button>
+            <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={onEmptyPic} />
+          </div>
+        )}
         <div style={styles.sheetRow}>
           <button style={styles.sheetVomit} onClick={() => { onVomit(); onClose(); }}>🤮 Vomit</button>
           {shotEnabled && (
@@ -1390,8 +1427,7 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
 // ============================================================
 function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], me, feedReactions = {}, onReact, onPerson }) {
   const events = [];
-  people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name, personId: p.id, target: "log:" + (e._id || e.t) })));
-  chat.forEach((m) => { if (!m.toPerson && !(m.text && m.text.startsWith("__shotin__"))) events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl, personId: m.personId, target: "chat:" + m.id }); });
+  people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name, personId: p.id, target: "log:" + (e._id || e.t) })));  chat.forEach((m) => { if (!m.toPerson && !(m.text && m.text.startsWith("__shotin__"))) events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl, personId: m.personId, target: "chat:" + m.id }); });
   shotCalls.forEach((s) => events.push({ kind: "shot", t: s.t, name: s.name, note: s.note, personId: s.personId, target: "shot:" + s.id }));
   // derived milestones: every 5th drink per person
   people.forEach((p) => {
@@ -1426,6 +1462,7 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], me, 
         <div style={styles.bigFeedRow} onClick={() => e.personId && onPerson && onPerson(e.personId)}>
           <span style={styles.bigFeedIcon}>{icon}</span>
           <span style={styles.bigFeedText}>{text}</span>
+          {e.kind === "log" && e.imageUrl && <img src={e.imageUrl} alt="" style={styles.feedThumb} />}
           <span style={styles.bigFeedAgo}>{ago}</span>
         </div>
         <div style={styles.feedReactBar}>

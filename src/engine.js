@@ -80,9 +80,11 @@ export function bacDescriptor(bac) {
 
 const pourMult = (e) => POUR[e.pour || DEFAULT_POUR]?.mult ?? 1;
 const drinkAlcG = (e, drinks = DRINKS) => (drinks[e.type]?.alcG || 0) * pourMult(e);
+const ABSORB_START = 0.5; // a just-finished drink is already ~half absorbed
 const absorbedFraction = (dT, t) => {
   const mins = (t - dT) / 60000;
-  return mins <= 0 ? 0 : Math.min(1, mins / ABSORB_MINUTES);
+  if (mins <= 0) return ABSORB_START;
+  return Math.min(1, ABSORB_START + (1 - ABSORB_START) * (mins / ABSORB_MINUTES));
 };
 
 export function bacAtTime(person, t, drinks = DRINKS) {

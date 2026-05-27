@@ -15,6 +15,7 @@ export const GLOBAL_CSS = `
   @keyframes bannerIn { from { transform: translateY(-80px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   @keyframes flashPop { 0% { transform: scale(0.4); opacity: 0; } 35% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+  @keyframes ringBurst { 0% { transform: scale(0.3); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
 `;
 
 export const styles = {
@@ -349,7 +350,10 @@ export const styles = {
   sheetCount: { fontFamily: SERIF, fontSize: 52, fontWeight: 700, color: "#f3ead4", lineHeight: 1 },
   sheetCountLabel: { fontSize: 13, color: "#9aa0b5" },
   sheetBac: { fontSize: 12, color: "#6f758c", marginTop: 2 },
-  sheetFlash: { position: "fixed", top: "38%", left: 0, right: 0, textAlign: "center", fontSize: 90, zIndex: 99, pointerEvents: "none", animation: "flashPop 0.7s ease forwards" },
+  sheetFlash: { position: "fixed", top: "34%", left: 0, right: 0, textAlign: "center", fontSize: 96, zIndex: 99, pointerEvents: "none", animation: "flashPop 0.7s ease forwards" },
+  sheetFlashWrap: { position: "fixed", inset: 0, zIndex: 98, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center" },
+  sheetFlashRing: { position: "absolute", width: 120, height: 120, borderRadius: 99, border: "4px solid #bfa46a", animation: "ringBurst 0.7s ease-out forwards" },
+  sheetFlashTxt: { position: "absolute", top: "58%", left: 0, right: 0, textAlign: "center", fontFamily: SERIF, fontSize: 26, fontStyle: "italic", color: "#f3ead4", animation: "flashPop 0.7s ease forwards" },
   sheetGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 },
   sheetDrink: { background: "rgba(191,164,106,0.12)", border: "1px solid rgba(191,164,106,0.3)", borderRadius: 14, padding: "16px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer" },
   sheetDrinkEmoji: { fontSize: 30 },
@@ -365,6 +369,7 @@ export const styles = {
   bigFeedRow: { display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 10, cursor: "pointer" },
   bigFeedItem: { marginBottom: 4 },
   feedReactBar: { display: "flex", gap: 4, alignItems: "center", padding: "3px 4px 0 12px", position: "relative", flexWrap: "wrap" },
+  feedThumb: { width: 34, height: 34, borderRadius: 7, objectFit: "cover", flexShrink: 0 },
   bigFeedIcon: { fontSize: 20, flexShrink: 0 },
   bigFeedText: { flex: 1, fontSize: 14, color: "#ece3d0" },
   bigFeedAgo: { fontSize: 11, color: "#6f758c", flexShrink: 0 },
@@ -376,5 +381,8 @@ export const styles = {
   sheetTally: { display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 6 },
   sheetTallyItem: { fontSize: 13, color: "#bfa46a" },
   shotComposerWrap: { marginTop: 8 },
+  emptyPicPrompt: { display: "flex", alignItems: "center", gap: 8, background: "rgba(191,164,106,0.1)", border: "1px solid rgba(191,164,106,0.25)", borderRadius: 10, padding: "8px 10px", marginBottom: 8 },
+  emptyPicText: { flex: 1, fontSize: 12, color: "#ece3d0" },
+  emptyPicBtn: { background: "rgba(191,164,106,0.2)", border: "1px solid rgba(191,164,106,0.4)", color: "#f3ead4", borderRadius: 8, padding: "7px 12px", fontSize: 13, cursor: "pointer", flexShrink: 0 },
   shotWarn: { fontSize: 12, color: "#e0a070", textAlign: "center", marginBottom: 6 },
 };
