@@ -141,6 +141,7 @@ export function useEvent(eventId) {
   const [chat, setChat] = useState([]);
   const [reactions, setReactions] = useState([]);
   const [shotCalls, setShotCalls] = useState([]);
+  const [fights, setFights] = useState([]);
   const [pendingLogs, setPendingLogs] = useState([]); // optimistic drinks shown instantly
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -149,13 +150,14 @@ export function useEvent(eventId) {
   const reload = useCallback(async () => {
     if (!eventId) return;
     try {
-      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }, { data: rx }] = await Promise.all([
+      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }, { data: rx }, { data: fg }] = await Promise.all([
         supabase.from("events").select("*").eq("id", eventId).single(),
         supabase.from("people").select("*").eq("event_id", eventId),
         supabase.from("drink_log").select("*").eq("event_id", eventId),
         supabase.from("chat").select("*").eq("event_id", eventId),
         supabase.from("shot_calls").select("*").eq("event_id", eventId),
         supabase.from("reactions").select("*").eq("event_id", eventId),
+        supabase.from("fights").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(100),
       ]);
       setEvent(ev || null);
       setPeople(ppl || []);
@@ -163,6 +165,7 @@ export function useEvent(eventId) {
       setChat(ch || []);
       setShotCalls(sc || []);
       setReactions(rx || []);
+      setFights(fg || []);
       setError(null);
     } catch (e) {
       setError(e.message || "Failed to load event");
@@ -200,6 +203,8 @@ export function useEvent(eventId) {
         () => supabase.from("shot_calls").select("*").eq("event_id", eventId).then(({ data }) => data && setShotCalls(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "reactions", filter: `event_id=eq.${eventId}` },
         () => supabase.from("reactions").select("*").eq("event_id", eventId).then(({ data }) => data && setReactions(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "fights", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("fights").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(100).then(({ data }) => data && setFights(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `id=eq.${eventId}` },
         () => supabase.from("events").select("*").eq("id", eventId).single().then(({ data }) => data && setEvent(data)))
       .subscribe();
@@ -324,6 +329,37 @@ export function useEvent(eventId) {
         await supabase.from("reactions").insert({ event_id: eventId, target, person_id: personId, emoji });
       }
     },
+    // --- Beer Fights ---
+    challengeFight: async ({ challengerId, challengerName, opponentId, opponentName, taunt }) => {
+      const { data, error } = await supabase.from("fights").insert({
+        event_id: eventId,
+        challenger_id: challengerId, challenger_name: challengerName,
+        opponent_id: opponentId, opponent_name: opponentName,
+        taunt: taunt || null,
+        status: "pending",
+      }).select().single();
+      if (error) throw error;
+      return data;
+    },
+    respondToFight: async (fightId, accept) => {
+      await supabase.from("fights").update({ status: accept ? "active" : "declined", started_at: accept ? new Date().toISOString() : null }).eq("id", fightId);
+    },
+    submitFightTaps: async (fightId, side, taps) => {
+      // side is "challenger" or "opponent"
+      const col = side === "challenger" ? "challenger_taps" : "opponent_taps";
+      await supabase.from("fights").update({ [col]: taps }).eq("id", fightId);
+    },
+    finalizeFight: async (fightId, result) => {
+      await supabase.from("fights").update({
+        status: "done",
+        winner_id: result.winnerId,
+        result_json: result,
+        ended_at: new Date().toISOString(),
+      }).eq("id", fightId);
+    },
+    expireFight: async (fightId) => {
+      await supabase.from("fights").update({ status: "expired" }).eq("id", fightId).eq("status", "pending");
+    },
     saveSettings: async (settings) => {
       await supabase.from("events").update({ settings }).eq("id", eventId);
     },
@@ -343,6 +379,21 @@ export function useEvent(eventId) {
     (feedReactions[r.target][r.emoji] = feedReactions[r.target][r.emoji] || []).push(r.person_id);
   });
 
+  const assembledFights = fights.map((f) => ({
+    id: f.id,
+    challengerId: f.challenger_id, challengerName: f.challenger_name,
+    opponentId: f.opponent_id, opponentName: f.opponent_name,
+    taunt: f.taunt,
+    status: f.status,
+    challengerTaps: f.challenger_taps,
+    opponentTaps: f.opponent_taps,
+    winnerId: f.winner_id,
+    result: f.result_json,
+    t: new Date(f.created_at).getTime(),
+    startedAt: f.started_at ? new Date(f.started_at).getTime() : null,
+    endedAt: f.ended_at ? new Date(f.ended_at).getTime() : null,
+  }));
+
   return {
     loading,
     error,
@@ -350,6 +401,7 @@ export function useEvent(eventId) {
     people: assembledPeople,
     chat: assembledChat,
     shotCalls: assembledShotCalls,
+    fights: assembledFights,
     feedReactions,
     settings: event?.settings || {},
     phase: event?.phase || "live",

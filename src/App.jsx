@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER, swordStats, resolveFight, TAUNTS,
 } from "./engine.js";
 
 // tiny convenience wrappers for team display
@@ -336,7 +336,7 @@ function themedPage(settings, extra = {}) {
 // LIVE SCREEN
 // ============================================================
 function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
-  const { people, chat, shotCalls, settings, actions, joinCode, eventName } = ev;
+  const { people, chat, shotCalls, fights = [], settings, actions, joinCode, eventName } = ev;
   const drinksMap = getDrinks(settings);
   const sizesMap = getSizes(settings);
   const theme = getTheme(settings);
@@ -443,6 +443,58 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     if (myShotUsed && !isDeveloper) return;
     actions.callShots(me.id, me.name, note || null);
   };
+
+  // --- Beer Fights ---
+  const fightsOn = settings.fightsEnabled === true;
+  const [activeFight, setActiveFight] = useState(null); // the fight currently in UI (pending challenge or active battle)
+  const [challengeTarget, setChallengeTarget] = useState(null); // person I'm about to challenge (composer open)
+  const fightRef = useRef(0);
+  useEffect(() => {
+    if (!me) return;
+    // newest fight involving me
+    const mine = fights.filter((f) => f.challengerId === me.id || f.opponentId === me.id).sort((a, b) => b.t - a.t);
+    const newest = mine[0];
+    if (!newest) return;
+    // surface pending challenges where I'm the opponent, and active fights either side
+    if (newest.status === "pending" && newest.opponentId === me.id) setActiveFight(newest);
+    else if (newest.status === "active") setActiveFight(newest);
+    else if (newest.status === "done" && activeFight && activeFight.id === newest.id) setActiveFight(newest);
+    else if (newest.status === "declined" || newest.status === "expired") {
+      if (activeFight && activeFight.id === newest.id) setActiveFight(null);
+    }
+  }, [fights, me]);
+  // 30s auto-expire for pending challenges (only the challenger triggers it to avoid races)
+  useEffect(() => {
+    if (!activeFight || activeFight.status !== "pending") return;
+    if (!me || activeFight.challengerId !== me.id) return;
+    const elapsed = Date.now() - activeFight.t;
+    const remaining = Math.max(0, 30000 - elapsed);
+    const id = setTimeout(() => { actions.expireFight(activeFight.id); }, remaining);
+    return () => clearTimeout(id);
+  }, [activeFight, me]);
+  // Same auto-expire for pending shot calls (~30s)
+  useEffect(() => {
+    if (!activeShot) return;
+    const elapsed = Date.now() - activeShot.t;
+    const remaining = Math.max(0, 30000 - elapsed);
+    const id = setTimeout(() => setActiveShot(null), remaining);
+    return () => clearTimeout(id);
+  }, [activeShot]);
+  // my fight record on the night
+  const myFightRecord = me ? fights.reduce((acc, f) => {
+    if (f.status !== "done" || !f.winnerId) return acc;
+    const involved = f.challengerId === me.id || f.opponentId === me.id;
+    if (!involved) return acc;
+    if (f.winnerId === me.id) return { ...acc, wins: acc.wins + 1 };
+    return { ...acc, losses: acc.losses + 1 };
+  }, { wins: 0, losses: 0 }) : { wins: 0, losses: 0 };
+  const fightRecord = (pid) => fights.reduce((acc, f) => {
+    if (f.status !== "done" || !f.winnerId) return acc;
+    const involved = f.challengerId === pid || f.opponentId === pid;
+    if (!involved) return acc;
+    if (f.winnerId === pid) return { ...acc, wins: acc.wins + 1 };
+    return { ...acc, losses: acc.losses + 1 };
+  }, { wins: 0, losses: 0 });
 
   // notify me when someone reacts to one of my feed items
   const feedRx = ev.feedReactions || {};
@@ -563,6 +615,21 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
         );
       })()}
 
+      {challengeTarget && me && (
+        <ChallengeComposer me={me} target={challengeTarget}
+          onSend={async (taunt) => {
+            try { await actions.challengeFight({ challengerId: me.id, challengerName: me.name, opponentId: challengeTarget.id, opponentName: challengeTarget.name, taunt }); }
+            catch (e) {}
+            setChallengeTarget(null);
+          }}
+          onCancel={() => setChallengeTarget(null)} />
+      )}
+
+      {activeFight && me && (
+        <FightOverlay fight={activeFight} me={me} people={people} drinks={drinksMap} liveNow={liveNow} actions={actions}
+          onClose={() => setActiveFight(null)} />
+      )}
+
       {banner && (
         <div style={{ ...styles.banner, ...(banner.big ? styles.bannerBig : {}) }}
           onClick={() => { if (banner.personId) { setStatsFocusId(banner.personId); setTab("stats"); } setBanner(null); }}
@@ -643,7 +710,8 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
               canLog={p.id === myPersonId || amHost}
               starred={stars.includes(p.id)} onStar={() => toggleStar(p.id)}
               isMe={p.id === myPersonId}
-              settings={settings} amHost={amHost} />
+              settings={settings} amHost={amHost}
+              fightsOn={fightsOn} onChallenge={(target) => setChallengeTarget(target)} record={fightRecord(p.id)} />
           ))}
           {amHost && (adding ? (
             <PersonForm sizes={sizesMap} onCancel={() => setAdding(false)}
@@ -654,7 +722,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
 
       {/* ---- FEED TAB ---- */}
       {tab === "feed" && (
-        <BigFeed people={people} now={liveNow} drinks={drinksMap} chat={chat} shotCalls={shotCalls} me={me} feedReactions={ev.feedReactions || {}} onReact={(target, emoji, already) => me && actions.toggleFeedReaction(target, me.id, emoji, already)} onPerson={(pid) => { setStatsFocusId(pid); setTab("stats"); }} />
+        <BigFeed people={people} now={liveNow} drinks={drinksMap} chat={chat} shotCalls={shotCalls} fights={fights} me={me} feedReactions={ev.feedReactions || {}} onReact={(target, emoji, already) => me && actions.toggleFeedReaction(target, me.id, emoji, already)} onPerson={(pid) => { setStatsFocusId(pid); setTab("stats"); }} />
       )}
 
       {/* ---- CHAT TAB ---- */}
@@ -931,7 +999,7 @@ function FavoriteDrinksChart({ people, drinks = DRINKS }) {
 // ============================================================
 // PERSON CARD + INDIVIDUAL STATS
 // ============================================================
-function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleExpand, onEdit, actions, setConfirmVomitId, canLog = false, starred = false, onStar, isMe = false, settings = {}, amHost = false }) {
+function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleExpand, onEdit, actions, setConfirmVomitId, canLog = false, starred = false, onStar, isMe = false, settings = {}, amHost = false, fightsOn = false, onChallenge, record = { wins: 0, losses: 0 } }) {
   const count = drinkCountAtTime(p, now);
   const bac = count ? bacAtTime(p, now, drinks) : 0;
   const desc = bacDescriptor(bac);
@@ -956,7 +1024,9 @@ function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleEx
           <div style={styles.bodyline}>
             {(sizes[p.size]?.label) || "Medium"} · {p.sex}
             {vomits > 0 && <span style={styles.vomitTag}> · 🤮 ×{vomits}</span>}
+            {fightsOn && (record.wins > 0 || record.losses > 0) && <span style={styles.fightRecord}> · ⚔️ {record.wins}-{record.losses}</span>}
             <button style={styles.editBtn} onClick={onEdit}>edit</button>
+            {fightsOn && !isMe && onChallenge && <button style={styles.fightBtn} onClick={(e) => { e.stopPropagation(); onChallenge(p); }}>⚔️ Fight</button>}
           </div>
           {teamsOn && amHost && (
             <div style={styles.assignRow}>
@@ -1425,10 +1495,11 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
 // ============================================================
 // BIG FEED (full tab — social wall)
 // ============================================================
-function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], me, feedReactions = {}, onReact, onPerson }) {
+function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], fights = [], me, feedReactions = {}, onReact, onPerson }) {
   const events = [];
   people.forEach((p) => p.log.forEach((e) => events.push({ kind: "log", ...e, name: p.name, personId: p.id, target: "log:" + (e._id || e.t) })));  chat.forEach((m) => { if (!m.toPerson && !(m.text && m.text.startsWith("__shotin__"))) events.push({ kind: "chat", t: m.t, name: m.name, text: m.text, imageUrl: m.imageUrl, personId: m.personId, target: "chat:" + m.id }); });
   shotCalls.forEach((s) => events.push({ kind: "shot", t: s.t, name: s.name, note: s.note, personId: s.personId, target: "shot:" + s.id }));
+  fights.forEach((f) => { if (f.status === "done" && f.winnerId) { const winner = f.winnerId === f.challengerId ? f.challengerName : f.opponentName; const loser = f.winnerId === f.challengerId ? f.opponentName : f.challengerName; events.push({ kind: "fight", t: (f.endedAt || f.t), name: winner, personId: f.winnerId, loser, target: "fight:" + f.id }); } });
   // derived milestones: every 5th drink per person
   people.forEach((p) => {
     const dl = p.log.filter((e) => e.type !== "vomit").sort((a, b) => a.t - b.t);
@@ -1451,6 +1522,7 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], me, 
     const ago = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago`;
     let icon, text;
     if (e.kind === "shot") { icon = "🥃"; text = `${e.name} called shots!${e.note ? " — " + e.note : ""}`; }
+    else if (e.kind === "fight") { icon = "⚔️"; text = `${e.name} beat ${e.loser} in a beer fight`; }
     else if (e.kind === "milestone") { icon = e.n % 10 === 0 ? "🔥" : "🍻"; text = `${e.name} hit ${e.n} drinks!`; }
     else if (e.kind === "chat") { icon = e.imageUrl && !e.text ? "📷" : "💬"; text = e.imageUrl && !e.text ? `${e.name} sent a photo` : `${e.name}: ${e.text}`; }
     else if (e.type === "vomit") { icon = "🤮"; text = `${e.name} had a rough moment`; }
@@ -1484,6 +1556,198 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], me, 
     <div style={styles.bigFeedWrap}>
       <div style={styles.bigFeedHead}><span style={styles.feedDot} /> THE NIGHT, LIVE</div>
       {events.length === 0 ? <div style={styles.feedVEmpty}>Nothing yet — tap ＋ to log the first drink.</div> : events.map(row)}
+    </div>
+  );
+}
+
+// ============================================================
+// BEER FIGHTS — challenge composer + fight overlay
+// ============================================================
+function ChallengeComposer({ me, target, onSend, onCancel }) {
+  const [taunt, setTaunt] = useState(null);
+  return (
+    <div style={styles.modalBg} onClick={onCancel}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 42, textAlign: "center" }}>⚔️</div>
+        <div style={{ ...styles.modalTitle, textAlign: "center" }}>Challenge {target.name}?</div>
+        <p style={{ ...styles.confirmText, textAlign: "center" }}>Best tap count wins. Your drinks tonight built your sword.</p>
+        <div style={styles.tauntList}>
+          <div style={styles.tauntLabel}>Add a taunt (optional)</div>
+          {TAUNTS.map((t, i) => (
+            <button key={i} style={{ ...styles.tauntBtn, ...(taunt === t ? styles.tauntBtnOn : {}) }} onClick={() => setTaunt(taunt === t ? null : t)}>{t}</button>
+          ))}
+        </div>
+        <div style={styles.formActions}>
+          <button style={styles.cancelBtn} onClick={onCancel}>Back down</button>
+          <button style={styles.dangerBtn} onClick={() => onSend(taunt)}>Send challenge ⚔️</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FightOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) {
+  const amChallenger = fight.challengerId === me.id;
+  const amOpponent = fight.opponentId === me.id;
+  const mySide = amChallenger ? "challenger" : "opponent";
+  const myKey = amChallenger ? "challengerTaps" : "opponentTaps";
+  const theirKey = amChallenger ? "opponentTaps" : "challengerTaps";
+  const challenger = people.find((p) => p.id === fight.challengerId);
+  const opponent = people.find((p) => p.id === fight.opponentId);
+
+  // PENDING (waiting for opponent decision)
+  if (fight.status === "pending") {
+    return (
+      <div style={styles.fightOverlay}>
+        <div style={styles.fightGlyph}>⚔️</div>
+        {amOpponent ? (
+          <>
+            <div style={styles.fightHead}>{fight.challengerName} challenges you!</div>
+            {fight.taunt && <div style={styles.fightTaunt}>"{fight.taunt}"</div>}
+            <div style={styles.fightSub}>Best tap count wins. Ready?</div>
+            <button style={styles.fightAccept} onClick={() => actions.respondToFight(fight.id, true)}>Bring it on ⚔️</button>
+            <button style={styles.fightDecline} onClick={() => actions.respondToFight(fight.id, false)}>Not tonight</button>
+          </>
+        ) : (
+          <>
+            <div style={styles.fightHead}>Waiting for {fight.opponentName}…</div>
+            {fight.taunt && <div style={styles.fightTaunt}>"{fight.taunt}"</div>}
+            <div style={styles.fightSub}>30 seconds to respond</div>
+            <button style={styles.fightDecline} onClick={onClose}>Cancel</button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (fight.status === "declined") {
+    return (
+      <div style={styles.fightOverlay}>
+        <div style={styles.fightGlyph}>🛡️</div>
+        <div style={styles.fightHead}>{amChallenger ? `${fight.opponentName} declined.` : "You declined."}</div>
+        <div style={styles.fightSub}>{amChallenger ? "Coward." : "Live to fight another round."}</div>
+        <button style={styles.fightAccept} onClick={onClose}>OK</button>
+      </div>
+    );
+  }
+  if (fight.status === "expired") {
+    return (
+      <div style={styles.fightOverlay}>
+        <div style={styles.fightGlyph}>⏳</div>
+        <div style={styles.fightHead}>Challenge expired</div>
+        <div style={styles.fightSub}>{amChallenger ? `${fight.opponentName} didn't respond.` : "Too slow."}</div>
+        <button style={styles.fightAccept} onClick={onClose}>OK</button>
+      </div>
+    );
+  }
+
+  // ACTIVE — running fight UI
+  return <FightActive fight={fight} mySide={mySide} myKey={myKey} theirKey={theirKey}
+    me={me} challenger={challenger} opponent={opponent} drinks={drinks} liveNow={liveNow}
+    actions={actions} onClose={onClose} />;
+}
+
+function FightActive({ fight, mySide, myKey, theirKey, me, challenger, opponent, drinks, liveNow, actions, onClose }) {
+  // 3 phases: countdown(3s) → tap window(5s) → result
+  const [phase, setPhase] = useState("countdown");
+  const [count, setCount] = useState(3);
+  const [taps, setTaps] = useState(0);
+  const [submitted, setSubmitted] = useState(false);
+  const tapsRef = useRef(0);
+
+  useEffect(() => {
+    if (phase !== "countdown") return;
+    if (count <= 0) { setPhase("tap"); return; }
+    const id = setTimeout(() => setCount(count - 1), 1000);
+    return () => clearTimeout(id);
+  }, [phase, count]);
+
+  useEffect(() => {
+    if (phase !== "tap") return;
+    const id = setTimeout(() => {
+      setPhase("submitted");
+      actions.submitFightTaps(fight.id, mySide, tapsRef.current).catch(() => {});
+      setSubmitted(true);
+    }, 5000);
+    return () => clearTimeout(id);
+  }, [phase, fight.id, mySide]);
+
+  // When both sides have submitted, finalize (challenger does it to avoid races)
+  useEffect(() => {
+    if (fight.challengerTaps == null || fight.opponentTaps == null) return;
+    if (fight.status === "done" || !fight.result) {
+      if (me.id !== fight.challengerId) return; // only challenger finalizes
+      if (fight.status === "done") return;
+      const cStats = swordStats(challenger, liveNow, drinks);
+      const oStats = swordStats(opponent, liveNow, drinks);
+      const result = resolveFight(
+        { name: challenger.name, taps: fight.challengerTaps, stats: cStats },
+        { name: opponent.name, taps: fight.opponentTaps, stats: oStats }
+      );
+      const winnerId = result.winner === "tie" ? null : result.winner === "a" ? challenger.id : opponent.id;
+      actions.finalizeFight(fight.id, { ...result, winnerId, challengerStats: cStats, opponentStats: oStats }).catch(() => {});
+    }
+  }, [fight.challengerTaps, fight.opponentTaps, fight.status, me, challenger, opponent, liveNow, drinks]);
+
+  const tap = () => {
+    if (phase !== "tap") return;
+    tapsRef.current += 1;
+    setTaps(tapsRef.current);
+  };
+
+  if (fight.status === "done" && fight.result) {
+    const r = fight.result;
+    const amWinner = r.winnerId === me.id;
+    const isTie = !r.winnerId;
+    return (
+      <div style={styles.fightOverlay}>
+        <div style={styles.fightGlyph}>{isTie ? "⚖️" : amWinner ? "🏆" : "💀"}</div>
+        <div style={styles.fightHead}>{isTie ? "Dead tie!" : amWinner ? "You won!" : `${(amWinner ? me : (me.id === challenger.id ? opponent : challenger)).name} won`}</div>
+        <div style={styles.fightScoreRow}>
+          <div style={styles.fightScoreSide}>
+            <div style={styles.fightScoreName}>{challenger.name}</div>
+            <div style={styles.fightScoreTaps}>{fight.challengerTaps} taps</div>
+            <div style={styles.fightScoreDmg}>dmg {r.aScore.toFixed(1)}</div>
+          </div>
+          <div style={styles.fightVs}>vs</div>
+          <div style={styles.fightScoreSide}>
+            <div style={styles.fightScoreName}>{opponent.name}</div>
+            <div style={styles.fightScoreTaps}>{fight.opponentTaps} taps</div>
+            <div style={styles.fightScoreDmg}>dmg {r.bScore.toFixed(1)}</div>
+          </div>
+        </div>
+        {r.log && r.log.length > 0 && r.log.map((line, i) => <div key={i} style={styles.fightLogLine}>{line}</div>)}
+        <button style={styles.fightAccept} onClick={onClose}>Done</button>
+      </div>
+    );
+  }
+
+  if (phase === "submitted") {
+    return (
+      <div style={styles.fightOverlay}>
+        <div style={styles.fightGlyph}>⏱️</div>
+        <div style={styles.fightHead}>{taps} taps locked in</div>
+        <div style={styles.fightSub}>Waiting for the other side…</div>
+      </div>
+    );
+  }
+
+  if (phase === "countdown") {
+    return (
+      <div style={styles.fightOverlay}>
+        <div style={styles.fightGlyph}>⚔️</div>
+        <div style={styles.fightHead}>Ready…</div>
+        <div style={styles.fightCount}>{count > 0 ? count : "GO!"}</div>
+      </div>
+    );
+  }
+
+  // tap phase
+  return (
+    <div style={styles.fightOverlay} onClick={tap} onTouchStart={tap}>
+      <div style={styles.fightTapPrompt}>TAP! TAP! TAP!</div>
+      <div style={styles.fightTapCount}>{taps}</div>
+      <div style={styles.fightSub}>swing that sword</div>
     </div>
   );
 }
@@ -1557,6 +1821,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
   const [teamsLocked, setTeamsLocked] = useState(init.teamsLocked === true);
   const setTeamField = (id, field, val) => setTeams((t) => ({ ...t, [id]: { ...(t[id] || {}), [field]: val } }));
   const [drinkNotifs, setDrinkNotifs] = useState(init.drinkNotifs === true);
+  const [fightsEnabled, setFightsEnabled] = useState(init.fightsEnabled === true);
   const setSexWeight = (sex, sz, v) => setSexWeights((w) => ({ ...w, [sex]: { ...w[sex], [sz]: v } }));
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState(DRINK_EMOJIS[0]);
@@ -1572,7 +1837,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
     setDrinks((d) => ({ ...d, [key]: { label, emoji: newEmoji, alcG: Number(newAlc) || 14, custom: true } }));
     setNewName(""); setNewAlc(14);
   };
-  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights, shotCallEnabled, teamCount, drinkNotifs, teams, teamsLocked });
+  const save = () => onSave({ state: stateCode, legalLimit: Number(limit) || 0.08, theme, drinks, sizes, sexWeights, shotCallEnabled, teamCount, drinkNotifs, teams, teamsLocked, fightsEnabled });
 
   return (
     <div style={themedPage({ theme })}>
@@ -1697,6 +1962,10 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
             <button style={{ ...styles.toggleBtn, ...(drinkNotifs ? styles.toggleOn : {}) }} onClick={() => setDrinkNotifs(!drinkNotifs)}>{drinkNotifs ? "On" : "Off"}</button>
           </div>
           <div style={styles.settingHint}>When on, a little banner pops up when anyone logs a drink (only while the app's open — these aren't phone push notifications). Off by default.</div>
+          <div style={{ ...styles.settingRow, marginTop: 10 }}>
+            <span style={styles.settingLabel}>⚔️ Beer Fights <InfoInline text="A silly side mini-game. Challenge someone from their Stats card → both phones tap as fast as they can for 5 seconds. Drinks build your sword. Off by default. Doesn't affect the leaderboard." /></span>
+            <button style={{ ...styles.toggleBtn, ...(fightsEnabled ? styles.toggleOn : {}) }} onClick={() => setFightsEnabled(!fightsEnabled)}>{fightsEnabled ? "On" : "Off"}</button>
+          </div>
         </div>
       )}
 

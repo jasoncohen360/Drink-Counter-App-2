@@ -197,3 +197,73 @@ export function teamStats(people, settings, now, drinks) {
 
 // The legend: Wade Boggs and a flight's worth of beers.
 export const BOGGS_NUMBER = 107;
+
+// ============================================================
+// BEER FIGHTS — sword stats from drinks, fairness-adjusted
+// ============================================================
+// Sword length and strength come from a fighter's drinking choices.
+// Beers = steady length. Wine = long but fragile mid-fight.
+// Shots = short but high-crit. Cocktails (and anything else) = wildcard variance.
+// Length is partially BAC-scaled so a small drinker who's actually drunk can
+// hang with a big drinker, but raw drinks still dominate.
+export function swordStats(person, now, drinks = DRINKS) {
+  if (!person) return { length: 1, crit: 0.05, fragile: 0, variance: 0.1, breakdown: { beer: 0, wine: 0, shot: 0, cocktail: 0 } };
+  const events = (person.log || []).filter((e) => e.t <= now && e.type !== "vomit");
+  const counts = { beer: 0, wine: 0, shot: 0, cocktail: 0 };
+  for (const e of events) {
+    if (e.type === "beer") counts.beer += 1;
+    else if (e.type === "wine") counts.wine += 1;
+    else if (e.type === "shot") counts.shot += 1;
+    else counts.cocktail += 1; // cocktails + anything else = wildcard
+  }
+  const total = counts.beer + counts.wine + counts.shot + counts.cocktail;
+  // partial BAC scaling for fairness (a smaller person hitting the same BAC as a big drinker gets a boost)
+  const bac = bacAtTime(person, now, drinks);
+  // raw length: drinks contribute, wine bonuses length, shots are short
+  const rawLength = (counts.beer * 1.0) + (counts.wine * 1.4) + (counts.shot * 0.4) + (counts.cocktail * 1.0);
+  // BAC bonus is small-ish — choices still dominate, body chemistry softens edges
+  const bacBonus = Math.min(6, bac * 60); // ~0.10 BAC ≈ +6 length
+  const length = Math.max(1, rawLength * 0.7 + bacBonus * 0.5);
+  // crit chance: shots give crit
+  const crit = Math.min(0.45, 0.05 + counts.shot * 0.05);
+  // fragile: wine adds break risk
+  const fragile = total > 0 ? Math.min(0.35, counts.wine * 0.06) : 0;
+  // variance: cocktails (and others) widen the range
+  const variance = Math.min(0.6, 0.1 + counts.cocktail * 0.04);
+  return { length, crit, fragile, variance, breakdown: counts, bac };
+}
+
+// Resolve a fight given both phones' tap counts and stats.
+// Returns { winner: "a"|"b"|"tie", aScore, bScore, aBroke, bBroke, log }.
+export function resolveFight(a, b) {
+  // a, b: { name, taps, stats }
+  const roll = (s, taps) => {
+    // base damage: each tap × length × (1 + variance noise)
+    const noise = 1 + (Math.random() * 2 - 1) * s.variance;
+    let dmg = taps * s.length * noise * 0.1;
+    // crit bonus from shots: chance per fight of a big crit hit
+    if (Math.random() < s.crit) dmg *= 1.4;
+    return dmg;
+  };
+  const aRoll = roll(a.stats, a.taps);
+  const bRoll = roll(b.stats, b.taps);
+  // wine break check (~15% if fragile is at full): if it triggers, lose 40% of effective damage
+  const aBroke = Math.random() < a.stats.fragile;
+  const bBroke = Math.random() < b.stats.fragile;
+  const aFinal = aRoll * (aBroke ? 0.6 : 1);
+  const bFinal = bRoll * (bBroke ? 0.6 : 1);
+  const log = [];
+  if (aBroke) log.push(`${a.name}'s wine sword cracked mid-swing 🍷💥`);
+  if (bBroke) log.push(`${b.name}'s wine sword cracked mid-swing 🍷💥`);
+  let winner;
+  if (Math.abs(aFinal - bFinal) < 0.01) winner = "tie";
+  else winner = aFinal > bFinal ? "a" : "b";
+  return { winner, aScore: aFinal, bScore: bFinal, aBroke, bBroke, log };
+}
+
+// Pre-baked taunts. Three is enough — small set, no staleness over a single night.
+export const TAUNTS = [
+  "I've had more drinks than you've had thoughts tonight",
+  "Your sword is as small as your tab",
+  "My liver could beat you",
+];
