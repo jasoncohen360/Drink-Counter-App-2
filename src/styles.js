@@ -18,6 +18,9 @@ export const GLOBAL_CSS = `
   @keyframes ringBurst { 0% { transform: scale(0.3); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
   @keyframes swordSwing { 0% { transform: rotate(-6deg); } 50% { transform: rotate(5deg); } 100% { transform: rotate(0deg); } }
   @keyframes clashPulse { 0%,100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.3) rotate(8deg); } }
+  @keyframes countPulse { 0% { transform: scale(1); color: #f3ead4; } 40% { transform: scale(1.5); color: #bfa46a; } 100% { transform: scale(1); color: #f3ead4; } }
+  @keyframes pongThrow { 0% { bottom: 4%; transform: translate(-50%,0) scale(1.3); } 100% { bottom: 70%; transform: translate(-50%,0) scale(0.7); } }
+  @keyframes splashPop { 0% { transform: translateX(-50%) scale(0.3); opacity: 0; } 50% { transform: translateX(-50%) scale(1.2); opacity: 1; } 100% { transform: translateX(-50%) scale(1); opacity: 0; } }
 `;
 
 export const styles = {
@@ -349,7 +352,8 @@ export const styles = {
   sheet: { width: "100%", maxHeight: "85vh", overflowY: "auto", background: "linear-gradient(180deg,#1c2036,#15182a)", borderRadius: "22px 22px 0 0", border: "1px solid rgba(191,164,106,0.3)", borderBottom: "none", padding: "10px 18px 28px", animation: "sheetUp 0.3s ease" },
   sheetHandle: { width: 40, height: 4, borderRadius: 99, background: "rgba(255,255,255,0.25)", margin: "4px auto 14px" },
   sheetStat: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, marginBottom: 14 },
-  sheetCount: { fontFamily: SERIF, fontSize: 52, fontWeight: 700, color: "#f3ead4", lineHeight: 1 },
+  sheetCount: { fontFamily: SERIF, fontSize: 52, fontWeight: 700, color: "#f3ead4", lineHeight: 1, display: "inline-block" },
+  sheetCountPulse: { animation: "countPulse 0.4s ease" },
   sheetCountLabel: { fontSize: 13, color: "#9aa0b5" },
   sheetBac: { fontSize: 12, color: "#6f758c", marginTop: 2 },
   sheetFlash: { position: "fixed", top: "34%", left: 0, right: 0, textAlign: "center", fontSize: 96, zIndex: 99, pointerEvents: "none", animation: "flashPop 0.7s ease forwards" },
@@ -403,6 +407,21 @@ export const styles = {
   swordArena: { width: "100%", maxWidth: 360, padding: "8px 0" },
   swordRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4 },
   swordClash: { fontSize: 30, animation: "clashPulse 0.6s ease infinite" },
+
+  pongOverlay: { position: "fixed", inset: 0, zIndex: 110, background: "radial-gradient(circle at 50% 30%, #14243a 0%, #0a0e16 75%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20, gap: 12, textAlign: "center", color: "#fff", touchAction: "none", userSelect: "none" },
+  pongGlyph: { fontSize: 70, lineHeight: 1 },
+  pongHud: { display: "flex", justifyContent: "space-between", width: "100%", maxWidth: 420, fontSize: 13, color: "#bfa46a", padding: "0 6px" },
+  pongHint: { fontSize: 13, color: "rgba(255,255,255,0.65)", fontStyle: "italic" },
+  pongTableWrap: { width: "100%", maxWidth: 420, flex: 1, maxHeight: "62vh", display: "flex", alignItems: "center", justifyContent: "center", perspective: "700px" },
+  pongPerspective: { width: "100%", height: "100%", display: "flex", alignItems: "flex-start", justifyContent: "center" },
+  pongTable: { position: "relative", width: "82%", height: "100%", background: "linear-gradient(180deg, #b5341f 0%, #8e2417 100%)", borderRadius: "50% 50% 14px 14px / 22% 22% 8px 8px", transform: "rotateX(52deg)", transformOrigin: "center top", boxShadow: "0 30px 50px rgba(0,0,0,0.55), inset 0 0 40px rgba(0,0,0,0.3)", border: "3px solid #6e1c12" },
+  pongCup: { position: "absolute", width: 30, height: 30, transform: "translate(-50%,-50%)" },
+  pongCupRim: { width: 30, height: 11, borderRadius: "50%", background: "radial-gradient(ellipse at center, #f2efe6 40%, #cfcabb 100%)", border: "2px solid #e8e2d2", position: "relative", zIndex: 2 },
+  pongCupBody: { width: 24, height: 18, margin: "-4px auto 0", background: "linear-gradient(180deg, #e2342a, #a8231b)", clipPath: "polygon(8% 0, 92% 0, 78% 100%, 22% 100%)" },
+  pongSplash: { position: "absolute", top: -18, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "splashPop 0.5s ease" },
+  pongBall: { position: "absolute", width: 20, height: 20, borderRadius: "50%", background: "radial-gradient(circle at 35% 30%, #fff 30%, #d7d2c4 90%)", boxShadow: "0 1px 3px rgba(0,0,0,0.4)", transform: "translate(-50%,-50%)", bottom: 0, zIndex: 5 },
+  pongBallShadow: { position: "absolute", width: 16, height: 6, borderRadius: "50%", background: "rgba(0,0,0,0.35)", transform: "translate(-50%,-50%)", zIndex: 1 },
+  pongAim: { position: "absolute", bottom: "6%", width: 4, borderRadius: 4, background: "linear-gradient(180deg, rgba(232,201,90,0.1), #e8c95a)", transform: "translateX(-50%)", transformOrigin: "bottom center", zIndex: 4 },
   bigFeedIcon: { fontSize: 20, flexShrink: 0 },
   bigFeedText: { flex: 1, fontSize: 14, color: "#ece3d0" },
   bigFeedAgo: { fontSize: 11, color: "#6f758c", flexShrink: 0 },

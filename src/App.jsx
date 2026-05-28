@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER, swordStats, resolveFight, TAUNTS,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER,
 } from "./engine.js";
 
 // tiny convenience wrappers for team display
@@ -616,9 +616,9 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       })()}
 
       {challengeTarget && me && (
-        <ChallengeComposer me={me} target={challengeTarget}
-          onSend={async (taunt) => {
-            try { await actions.challengeFight({ challengerId: me.id, challengerName: me.name, opponentId: challengeTarget.id, opponentName: challengeTarget.name, taunt }); }
+        <PongChallengeComposer me={me} target={challengeTarget}
+          onSend={async () => {
+            try { await actions.challengeFight({ challengerId: me.id, challengerName: me.name, opponentId: challengeTarget.id, opponentName: challengeTarget.name, taunt: null }); }
             catch (e) {}
             setChallengeTarget(null);
           }}
@@ -626,7 +626,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       )}
 
       {activeFight && me && (
-        <FightOverlay fight={activeFight} me={me} people={people} drinks={drinksMap} liveNow={liveNow} actions={actions}
+        <PongOverlay fight={activeFight} me={me} people={people} drinks={drinksMap} liveNow={liveNow} actions={actions}
           onClose={() => setActiveFight(null)} />
       )}
 
@@ -1026,7 +1026,7 @@ function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleEx
             {vomits > 0 && <span style={styles.vomitTag}> · 🤮 ×{vomits}</span>}
             {fightsOn && (record.wins > 0 || record.losses > 0) && <span style={styles.fightRecord}> · ⚔️ {record.wins}-{record.losses}</span>}
             <button style={styles.editBtn} onClick={onEdit}>edit</button>
-            {fightsOn && !isMe && onChallenge && <button style={styles.fightBtn} onClick={(e) => { e.stopPropagation(); onChallenge(p); }}>⚔️ Fight</button>}
+            {fightsOn && !isMe && onChallenge && <button style={styles.fightBtn} onClick={(e) => { e.stopPropagation(); onChallenge(p); }}>🏓 Pong</button>}
           </div>
           {teamsOn && amHost && (
             <div style={styles.assignRow}>
@@ -1451,7 +1451,7 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
       <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={styles.sheetHandle} />
         <div style={styles.sheetStat}>
-          <span style={styles.sheetCount}>{count}</span>
+          <span style={{ ...styles.sheetCount, ...(flash ? styles.sheetCountPulse : {}) }} key={count}>{count}</span>
           <span style={styles.sheetCountLabel}>drink{count === 1 ? "" : "s"} · <span style={{ color: desc.tone }}>{desc.word}</span></span>
           <span style={styles.sheetBac}>~{bac.toFixed(3)} BAC{count > 0 && people.length > 1 ? ` · ${ord(place)} place` : ""}</span>
           {count > 0 && <div style={styles.sheetTally}>{Object.entries(tally).map(([t, n]) => <span key={t} style={styles.sheetTallyItem}>{(drinks[t] || { emoji: "🍸" }).emoji} {n}</span>)}</div>}
@@ -1461,13 +1461,6 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
             <span style={styles.emptyPicText}>📸 Snap your empty? (optional)</span>
             <button style={styles.emptyPicBtn} onClick={() => photoRef.current?.click()}>Add pic</button>
             <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={onEmptyPic} />
-          </div>
-        )}
-        {flash && (
-          <div style={styles.sheetFlashWrap}>
-            <div style={styles.sheetFlashRing} />
-            <div style={styles.sheetFlash}>{flash}</div>
-            <div style={styles.sheetFlashTxt}>+1 🎉</div>
           </div>
         )}
         <div style={styles.sheetGrid}>
@@ -1539,7 +1532,7 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], figh
     const ago = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago`;
     let icon, text;
     if (e.kind === "shot") { icon = "🥃"; text = `${e.name} called shots!${e.note ? " — " + e.note : ""}`; }
-    else if (e.kind === "fight") { icon = "⚔️"; text = `${e.name} beat ${e.loser} in a beer fight`; }
+    else if (e.kind === "fight") { icon = "🏓"; text = `${e.name} beat ${e.loser} at beer pong`; }
     else if (e.kind === "milestone") { icon = e.n % 10 === 0 ? "🔥" : "🍻"; text = `${e.name} hit ${e.n} drinks!`; }
     else if (e.kind === "chat") { icon = e.imageUrl && !e.text ? "📷" : "💬"; text = e.imageUrl && !e.text ? `${e.name} sent a photo` : `${e.name}: ${e.text}`; }
     else if (e.type === "vomit") { icon = "🤮"; text = `${e.name} had a rough moment`; }
@@ -1583,57 +1576,50 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], figh
 }
 
 // ============================================================
-// BEER FIGHTS — challenge composer + fight overlay
+// BEER PONG — challenge composer + game overlay
 // ============================================================
-function ChallengeComposer({ me, target, onSend, onCancel }) {
-  const [taunt, setTaunt] = useState(null);
+function PongChallengeComposer({ me, target, onSend, onCancel }) {
   return (
     <div style={styles.modalBg} onClick={onCancel}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontSize: 42, textAlign: "center" }}>⚔️</div>
-        <div style={{ ...styles.modalTitle, textAlign: "center" }}>Challenge {target.name}?</div>
-        <p style={{ ...styles.confirmText, textAlign: "center" }}>Best tap count wins. Your drinks tonight built your sword.</p>
-        <div style={styles.tauntList}>
-          <div style={styles.tauntLabel}>Add a taunt (optional)</div>
-          {TAUNTS.map((t, i) => (
-            <button key={i} style={{ ...styles.tauntBtn, ...(taunt === t ? styles.tauntBtnOn : {}) }} onClick={() => setTaunt(taunt === t ? null : t)}>{t}</button>
-          ))}
-        </div>
+        <div style={{ fontSize: 42, textAlign: "center" }}>🏓</div>
+        <div style={{ ...styles.modalTitle, textAlign: "center" }}>Challenge {target.name} to beer pong?</div>
+        <p style={{ ...styles.confirmText, textAlign: "center" }}>Sink all their cups before they sink yours. The more you've had to drink, the more cups you have to clear — good luck.</p>
         <div style={styles.formActions}>
           <button style={styles.cancelBtn} onClick={onCancel}>Back down</button>
-          <button style={styles.dangerBtn} onClick={() => onSend(taunt)}>Send challenge ⚔️</button>
+          <button style={styles.dangerBtn} onClick={onSend}>Send challenge 🏓</button>
         </div>
       </div>
     </div>
   );
 }
 
-function FightOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) {
+// number of cups scales with how much you've had (more drinks = harder)
+function cupCountFor(person, now, drinks) {
+  const n = drinkCountAtTime(person, now);
+  return Math.max(3, Math.min(10, 3 + Math.floor(n / 2)));
+}
+
+function PongOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) {
   const amChallenger = fight.challengerId === me.id;
   const amOpponent = fight.opponentId === me.id;
-  const mySide = amChallenger ? "challenger" : "opponent";
-  const myKey = amChallenger ? "challengerTaps" : "opponentTaps";
-  const theirKey = amChallenger ? "opponentTaps" : "challengerTaps";
   const challenger = people.find((p) => p.id === fight.challengerId);
   const opponent = people.find((p) => p.id === fight.opponentId);
 
-  // PENDING (waiting for opponent decision)
   if (fight.status === "pending") {
     return (
-      <div style={styles.fightOverlay}>
-        <div style={styles.fightGlyph}>⚔️</div>
+      <div style={styles.pongOverlay}>
+        <div style={styles.pongGlyph}>🏓</div>
         {amOpponent ? (
           <>
-            <div style={styles.fightHead}>{fight.challengerName} challenges you!</div>
-            {fight.taunt && <div style={styles.fightTaunt}>"{fight.taunt}"</div>}
-            <div style={styles.fightSub}>Best tap count wins. Ready?</div>
-            <button style={styles.fightAccept} onClick={() => actions.respondToFight(fight.id, true)}>Bring it on ⚔️</button>
+            <div style={styles.fightHead}>{fight.challengerName} challenges you to pong!</div>
+            <div style={styles.fightSub}>Sink their cups before they sink yours.</div>
+            <button style={styles.fightAccept} onClick={() => actions.respondToFight(fight.id, true)}>Rack 'em up 🏓</button>
             <button style={styles.fightDecline} onClick={() => actions.respondToFight(fight.id, false)}>Not tonight</button>
           </>
         ) : (
           <>
             <div style={styles.fightHead}>Waiting for {fight.opponentName}…</div>
-            {fight.taunt && <div style={styles.fightTaunt}>"{fight.taunt}"</div>}
             <div style={styles.fightSub}>30 seconds to respond</div>
             <button style={styles.fightDecline} onClick={onClose}>Cancel</button>
           </>
@@ -1641,143 +1627,141 @@ function FightOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) 
       </div>
     );
   }
-
   if (fight.status === "declined") {
     return (
-      <div style={styles.fightOverlay}>
-        <div style={styles.fightGlyph}>🛡️</div>
+      <div style={styles.pongOverlay}>
+        <div style={styles.pongGlyph}>🚱</div>
         <div style={styles.fightHead}>{amChallenger ? `${fight.opponentName} declined.` : "You declined."}</div>
-        <div style={styles.fightSub}>{amChallenger ? "Coward." : "Live to fight another round."}</div>
+        <div style={styles.fightSub}>{amChallenger ? "Weak." : "Maybe later."}</div>
         <button style={styles.fightAccept} onClick={onClose}>OK</button>
       </div>
     );
   }
   if (fight.status === "expired") {
     return (
-      <div style={styles.fightOverlay}>
-        <div style={styles.fightGlyph}>⏳</div>
+      <div style={styles.pongOverlay}>
+        <div style={styles.pongGlyph}>⏳</div>
         <div style={styles.fightHead}>Challenge expired</div>
-        <div style={styles.fightSub}>{amChallenger ? `${fight.opponentName} didn't respond.` : "Too slow."}</div>
         <button style={styles.fightAccept} onClick={onClose}>OK</button>
       </div>
     );
   }
 
-  // ACTIVE — running fight UI
-  return <FightActive fight={fight} mySide={mySide} myKey={myKey} theirKey={theirKey}
-    me={me} challenger={challenger} opponent={opponent} drinks={drinks} liveNow={liveNow}
+  // ACTIVE
+  return <PongGame fight={fight} me={me} amChallenger={amChallenger}
+    challenger={challenger} opponent={opponent} drinks={drinks} liveNow={liveNow}
     actions={actions} onClose={onClose} />;
 }
 
-// A stylized retro sword drawn in SVG. Length scales with stat.
-function PixelSword({ length = 8, facing = "right", color = "#cfd8e3", broken = false, swinging = false }) {
-  const bladeLen = Math.max(28, Math.min(150, 28 + length * 4));
-  const W = 200, H = 60;
-  const cy = H / 2;
-  const hiltX = 18;
-  const bladeEnd = hiltX + bladeLen;
-  const breakPt = broken ? hiltX + bladeLen * 0.55 : bladeEnd;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 260, transform: facing === "left" ? "scaleX(-1)" : "none", ...(swinging ? { animation: "swordSwing 0.18s ease" } : {}) }}>
-      <rect x={hiltX - 14} y={cy - 3} width="10" height="6" fill="#7a5c2e" />
-      <rect x={hiltX - 5} y={cy - 4} width="8" height="8" fill="#9c7536" />
-      <rect x={hiltX} y={cy - 11} width="6" height="22" fill="#c9a24a" />
-      <rect x={hiltX + 6} y={cy - 4} width={Math.max(0, breakPt - hiltX - 6)} height="8" fill={color} />
-      <rect x={hiltX + 6} y={cy - 4} width={Math.max(0, breakPt - hiltX - 6)} height="3" fill="#ffffff" opacity="0.5" />
-      {!broken && <polygon points={`${bladeEnd},${cy - 4} ${bladeEnd + 12},${cy} ${bladeEnd},${cy + 4}`} fill={color} />}
-      {broken && <polygon points={`${breakPt},${cy - 4} ${breakPt + 7},${cy - 1} ${breakPt + 2},${cy + 2} ${breakPt + 8},${cy + 4} ${breakPt},${cy + 4}`} fill={color} />}
-    </svg>
-  );
-}
-function swordColorFor(stats) {
-  const b = stats?.breakdown || {};
-  const max = Math.max(b.beer || 0, b.wine || 0, b.shot || 0, b.cocktail || 0);
-  if (max === 0) return "#cfd8e3";
-  if ((b.wine || 0) === max) return "#c06a8e";
-  if ((b.shot || 0) === max) return "#e8c95a";
-  if ((b.cocktail || 0) === max) return "#5ad9c0";
-  return "#cfd8e3";
-}
+// ---- the actual game ----
+// Phase 1 focus: the THROW must feel good. Flick-and-release on an angled table.
+function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveNow, actions, onClose }) {
+  // each player shoots at the OTHER player's cups. Track how many of my opponent's
+  // cups I've sunk, locally, then post my made-count when my turn pile is done.
+  const myTargetPerson = amChallenger ? opponent : challenger;
+  const totalCups = cupCountFor(myTargetPerson, liveNow, drinks);
+  const SHOTS = totalCups; // you get one shot per cup to clear them all
+  const [made, setMade] = useState(0);
+  const [shotsUsed, setShotsUsed] = useState(0);
+  const [phase, setPhase] = useState("playing"); // playing | submitted
+  const [ball, setBall] = useState(null); // active throw animation state
+  const [aim, setAim] = useState(null); // {power, angle} preview while dragging
+  const [splash, setSplash] = useState(null);
+  const areaRef = useRef(null);
+  const dragStart = useRef(null);
+  const submittedRef = useRef(false);
 
-function FightActive({ fight, mySide, myKey, theirKey, me, challenger, opponent, drinks, liveNow, actions, onClose }) {
-  // 3 phases: countdown(3s) → tap window(5s) → result
-  const [phase, setPhase] = useState("countdown");
-  const [count, setCount] = useState(3);
-  const [taps, setTaps] = useState(0);
-  const [submitted, setSubmitted] = useState(false);
-  const tapsRef = useRef(0);
+  // cup layout (triangle), recomputed when count changes; which are still standing
+  const [standing, setStanding] = useState(() => Array.from({ length: totalCups }, (_, i) => i));
 
-  useEffect(() => {
-    if (phase !== "countdown") return;
-    if (count <= 0) { setPhase("tap"); return; }
-    const id = setTimeout(() => setCount(count - 1), 1000);
-    return () => clearTimeout(id);
-  }, [phase, count]);
+  const cupPositions = pyramidPositions(totalCups);
 
-  useEffect(() => {
-    if (phase !== "tap") return;
-    const id = setTimeout(() => {
-      setPhase("submitted");
-      actions.submitFightTaps(fight.id, mySide, tapsRef.current).catch(() => {});
-      setSubmitted(true);
-    }, 5000);
-    return () => clearTimeout(id);
-  }, [phase, fight.id, mySide]);
-
-  // When both sides have submitted, finalize (challenger does it to avoid races)
-  useEffect(() => {
-    if (fight.challengerTaps == null || fight.opponentTaps == null) return;
-    if (fight.status === "done" || !fight.result) {
-      if (me.id !== fight.challengerId) return; // only challenger finalizes
-      if (fight.status === "done") return;
-      const cStats = swordStats(challenger, liveNow, drinks);
-      const oStats = swordStats(opponent, liveNow, drinks);
-      const result = resolveFight(
-        { name: challenger.name, taps: fight.challengerTaps, stats: cStats },
-        { name: opponent.name, taps: fight.opponentTaps, stats: oStats }
-      );
-      const winnerId = result.winner === "tie" ? null : result.winner === "a" ? challenger.id : opponent.id;
-      actions.finalizeFight(fight.id, { ...result, winnerId, challengerStats: cStats, opponentStats: oStats }).catch(() => {});
-    }
-  }, [fight.challengerTaps, fight.opponentTaps, fight.status, me, challenger, opponent, liveNow, drinks]);
-
-  const tap = () => {
-    if (phase !== "tap") return;
-    tapsRef.current += 1;
-    setTaps(tapsRef.current);
+  const onDown = (e) => {
+    if (phase !== "playing" || ball) return;
+    const pt = pointFrom(e);
+    dragStart.current = pt;
+  };
+  const onMove = (e) => {
+    if (!dragStart.current || ball) return;
+    const pt = pointFrom(e);
+    const dx = pt.x - dragStart.current.x;
+    const dy = pt.y - dragStart.current.y;
+    // only meaningful if dragging upward (toward cups)
+    const power = Math.min(1, Math.max(0, -dy / 220));
+    const angle = Math.max(-0.6, Math.min(0.6, dx / 240));
+    setAim({ power, angle });
+  };
+  const onUp = (e) => {
+    if (!dragStart.current || ball) { dragStart.current = null; return; }
+    const a = aim;
+    dragStart.current = null;
+    setAim(null);
+    if (!a || a.power < 0.15) return; // too weak, no throw
+    throwBall(a);
   };
 
+  const throwBall = (a) => {
+    // landing X based on angle, landing "depth" based on power
+    const landX = 50 + a.angle * 60; // percent across
+    const landDepth = a.power; // 0..1 (1 = far cups)
+    setBall({ a, landX, landDepth });
+    // determine hit: does landing line up with a standing cup?
+    setTimeout(() => {
+      const hitIdx = detectHit(landX, landDepth, cupPositions, standing);
+      if (hitIdx != null) {
+        setStanding((s) => s.filter((i) => i !== hitIdx));
+        setMade((m) => m + 1);
+        setSplash(hitIdx);
+        setTimeout(() => setSplash(null), 500);
+      }
+      setShotsUsed((u) => u + 1);
+      setBall(null);
+    }, 650); // matches ball flight animation
+  };
+
+  // when shots run out, submit my made-count
+  useEffect(() => {
+    if (shotsUsed >= SHOTS && !submittedRef.current) {
+      submittedRef.current = true;
+      setPhase("submitted");
+      const side = amChallenger ? "challenger" : "opponent";
+      actions.submitFightTaps(fight.id, side, made).catch(() => {});
+    }
+  }, [shotsUsed, SHOTS, made, amChallenger, fight.id]);
+
+  // finalize when both have submitted (challenger does it)
+  useEffect(() => {
+    if (fight.challengerTaps == null || fight.opponentTaps == null) return;
+    if (fight.status === "done") return;
+    if (me.id !== fight.challengerId) return;
+    const cMade = fight.challengerTaps, oMade = fight.opponentTaps;
+    // higher made count wins; tie broken by fewer cups needed (underdog bonus already in cup count)
+    let winnerId = null;
+    if (cMade > oMade) winnerId = fight.challengerId;
+    else if (oMade > cMade) winnerId = fight.opponentId;
+    actions.finalizeFight(fight.id, { winnerId, challengerMade: cMade, opponentMade: oMade }).catch(() => {});
+  }, [fight.challengerTaps, fight.opponentTaps, fight.status, me]);
+
+  // RESULT
   if (fight.status === "done" && fight.result) {
     const r = fight.result;
     const amWinner = r.winnerId === me.id;
     const isTie = !r.winnerId;
-    const cStats = r.challengerStats || swordStats(challenger, liveNow, drinks);
-    const oStats = r.opponentStats || swordStats(opponent, liveNow, drinks);
     return (
-      <div style={styles.fightOverlay}>
-        <div style={styles.fightGlyph}>{isTie ? "⚖️" : amWinner ? "🏆" : "💀"}</div>
-        <div style={styles.fightHead}>{isTie ? "Dead tie!" : amWinner ? "You won!" : `${(amWinner ? me : (me.id === challenger.id ? opponent : challenger)).name} won`}</div>
-        <div style={styles.swordArena}>
-          <div style={styles.swordRow}>
-            <PixelSword length={cStats.length} facing="right" color={swordColorFor(cStats)} broken={r.aBroke} />
-            <span style={styles.swordClash}>⚔️</span>
-            <PixelSword length={oStats.length} facing="left" color={swordColorFor(oStats)} broken={r.bBroke} />
-          </div>
-        </div>
+      <div style={styles.pongOverlay}>
+        <div style={styles.pongGlyph}>{isTie ? "🤝" : amWinner ? "🏆" : "💀"}</div>
+        <div style={styles.fightHead}>{isTie ? "Tie game!" : amWinner ? "You won!" : `${(me.id === challenger.id ? opponent : challenger).name} won`}</div>
         <div style={styles.fightScoreRow}>
           <div style={styles.fightScoreSide}>
             <div style={styles.fightScoreName}>{challenger.name}</div>
-            <div style={styles.fightScoreTaps}>{fight.challengerTaps} taps</div>
-            <div style={styles.fightScoreDmg}>dmg {r.aScore.toFixed(1)}</div>
+            <div style={styles.fightScoreTaps}>{r.challengerMade} cups</div>
           </div>
           <div style={styles.fightVs}>vs</div>
           <div style={styles.fightScoreSide}>
             <div style={styles.fightScoreName}>{opponent.name}</div>
-            <div style={styles.fightScoreTaps}>{fight.opponentTaps} taps</div>
-            <div style={styles.fightScoreDmg}>dmg {r.bScore.toFixed(1)}</div>
+            <div style={styles.fightScoreTaps}>{r.opponentMade} cups</div>
           </div>
         </div>
-        {r.log && r.log.length > 0 && r.log.map((line, i) => <div key={i} style={styles.fightLogLine}>{line}</div>)}
         <button style={styles.fightAccept} onClick={onClose}>Done</button>
       </div>
     );
@@ -1785,37 +1769,99 @@ function FightActive({ fight, mySide, myKey, theirKey, me, challenger, opponent,
 
   if (phase === "submitted") {
     return (
-      <div style={styles.fightOverlay}>
-        <div style={styles.fightGlyph}>⏱️</div>
-        <div style={styles.fightHead}>{taps} taps locked in</div>
+      <div style={styles.pongOverlay}>
+        <div style={styles.pongGlyph}>⏱️</div>
+        <div style={styles.fightHead}>You sank {made} of {totalCups}</div>
         <div style={styles.fightSub}>Waiting for the other side…</div>
       </div>
     );
   }
 
-  if (phase === "countdown") {
-    return (
-      <div style={styles.fightOverlay}>
-        <div style={styles.fightGlyph}>⚔️</div>
-        <div style={styles.fightHead}>Ready…</div>
-        <div style={styles.fightCount}>{count > 0 ? count : "GO!"}</div>
-      </div>
-    );
-  }
-
-  // tap phase — my sword grows a touch with each tap and swings
-  const myStats = swordStats(mySide === "challenger" ? challenger : opponent, liveNow, drinks);
+  // PLAYING — the table
   return (
-    <div style={styles.fightOverlay} onClick={tap} onTouchStart={tap}>
-      <div style={styles.fightTapPrompt}>TAP! TAP! TAP!</div>
-      <div style={styles.swordArena}>
-        <PixelSword key={taps} length={myStats.length + taps * 0.15} facing="right" color={swordColorFor(myStats)} swinging={taps > 0} />
+    <div style={styles.pongOverlay}>
+      <div style={styles.pongHud}>
+        <span>🎯 vs {myTargetPerson?.name}</span>
+        <span>Cups: {standing.length} left</span>
+        <span>Shots: {SHOTS - shotsUsed}</span>
       </div>
-      <div style={styles.fightTapCount}>{taps}</div>
-      <div style={styles.fightSub}>swing that sword</div>
+      <div style={styles.pongTableWrap} ref={areaRef}
+        onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+        onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
+        <PongTable cupPositions={cupPositions} standing={standing} ball={ball} aim={aim} splash={splash} />
+      </div>
+      <div style={styles.pongHint}>{ball ? "…" : aim ? "release to throw!" : "drag back & up, then release to throw"}</div>
     </div>
   );
 }
+
+// triangle of cups: returns array of {x,y} in 0..100 percent (x across, y depth)
+function pyramidPositions(n) {
+  // build rows: 1,2,3,... until we have >= n, then trim
+  const rows = [];
+  let placed = 0, row = 1;
+  while (placed < n) { rows.push(Math.min(row, n - placed)); placed += Math.min(row, n - placed); row++; }
+  const positions = [];
+  const topY = 18, rowGap = 11;
+  rows.forEach((count, ri) => {
+    const y = topY + ri * rowGap;
+    const spread = 9;
+    const startX = 50 - ((count - 1) * spread) / 2;
+    for (let c = 0; c < count; c++) positions.push({ x: startX + c * spread, y });
+  });
+  return positions;
+}
+
+function detectHit(landX, landDepth, positions, standing) {
+  // map landDepth (0..1) to a y target (closer cups = lower depth)
+  const targetY = 18 + landDepth * 42;
+  let best = null, bestDist = 999;
+  standing.forEach((idx) => {
+    const p = positions[idx]; if (!p) return;
+    const dist = Math.hypot(p.x - landX, (p.y - targetY) * 1.2);
+    if (dist < bestDist) { bestDist = dist; best = idx; }
+  });
+  return bestDist < 6 ? best : null; // within tolerance = made it
+}
+
+function pointFrom(e) {
+  if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  if (e.changedTouches && e.changedTouches[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+  return { x: e.clientX, y: e.clientY };
+}
+
+// the visual table — angled perspective via CSS transform, SVG cups + ball
+function PongTable({ cupPositions, standing, ball, aim, splash }) {
+  return (
+    <div style={styles.pongPerspective}>
+      <div style={styles.pongTable}>
+        {/* cups */}
+        {cupPositions.map((p, idx) => {
+          if (!standing.includes(idx)) return null;
+          return (
+            <div key={idx} style={{ ...styles.pongCup, left: `${p.x}%`, top: `${p.y}%` }}>
+              <div style={styles.pongCupRim} />
+              <div style={styles.pongCupBody} />
+              {splash === idx && <div style={styles.pongSplash}>💦</div>}
+            </div>
+          );
+        })}
+        {/* aim guide */}
+        {aim && !ball && (
+          <div style={{ ...styles.pongAim, left: `${50 + aim.angle * 30}%`, height: `${20 + aim.power * 55}%`, opacity: 0.35 + aim.power * 0.5 }} />
+        )}
+        {/* ball + shadow */}
+        {ball && (
+          <>
+            <div style={{ ...styles.pongBallShadow, left: `${ball.landX}%`, top: `${18 + ball.landDepth * 42}%` }} />
+            <div style={{ ...styles.pongBall, left: `${ball.landX}%`, animation: "pongThrow 0.65s ease-out forwards" }} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 // ============================================================
 // SUGGESTION BOX (everyone can submit; developer can read)
@@ -2031,7 +2077,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
           </div>
           <div style={styles.settingHint}>When on, a little banner pops up when anyone logs a drink (only while the app's open — these aren't phone push notifications). Off by default.</div>
           <div style={{ ...styles.settingRow, marginTop: 10 }}>
-            <span style={styles.settingLabel}>⚔️ Beer Fights <InfoInline text="A silly side mini-game. Challenge someone from their Stats card → both phones tap as fast as they can for 5 seconds. Drinks build your sword. Off by default. Doesn't affect the leaderboard." /></span>
+            <span style={styles.settingLabel}>🏓 Beer Pong <InfoInline text="A mini-game. Challenge someone from their Stats card → take turns sinking cups by flicking the ball. The more you've drunk, the more cups you have to clear. Off by default. Doesn't affect the leaderboard." /></span>
             <button style={{ ...styles.toggleBtn, ...(fightsEnabled ? styles.toggleOn : {}) }} onClick={() => setFightsEnabled(!fightsEnabled)}>{fightsEnabled ? "On" : "Off"}</button>
           </div>
         </div>
