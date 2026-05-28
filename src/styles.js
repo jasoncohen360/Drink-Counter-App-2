@@ -16,6 +16,8 @@ export const GLOBAL_CSS = `
   @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   @keyframes flashPop { 0% { transform: scale(0.4); opacity: 0; } 35% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
   @keyframes ringBurst { 0% { transform: scale(0.3); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
+  @keyframes swordSwing { 0% { transform: rotate(-6deg); } 50% { transform: rotate(5deg); } 100% { transform: rotate(0deg); } }
+  @keyframes clashPulse { 0%,100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.3) rotate(8deg); } }
 `;
 
 export const styles = {
@@ -240,7 +242,7 @@ export const styles = {
   saveBtn: { background: "#bfa46a", border: "none", color: "#15182a", borderRadius: 10, padding: "9px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer" },
   removeBtn: { background: "none", border: "1px solid rgba(192,57,43,0.5)", color: "#d9533b", borderRadius: 10, padding: "9px 16px", fontSize: 14, cursor: "pointer", marginRight: "auto" },
   dangerBtn: { background: "#c0392b", border: "none", color: "#fff", borderRadius: 10, padding: "9px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer" },
-  modalBg: { position: "fixed", inset: 0, background: "rgba(8,10,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50 },
+  modalBg: { position: "fixed", inset: 0, background: "rgba(8,10,18,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 120 },
   modal: { background: "#1a1e30", border: "1px solid rgba(191,164,106,0.35)", borderRadius: 16, padding: 20, width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: 12 },
   modalTitle: { fontFamily: SERIF, fontSize: 20, color: "#f3ead4", fontStyle: "italic" },
   confirmText: { fontSize: 14, lineHeight: 1.6, color: "#cdd2e0", margin: 0 },
@@ -369,7 +371,10 @@ export const styles = {
   bigFeedRow: { display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 10, cursor: "pointer" },
   bigFeedItem: { marginBottom: 4 },
   feedReactBar: { display: "flex", gap: 4, alignItems: "center", padding: "3px 4px 0 12px", position: "relative", flexWrap: "wrap" },
-  feedThumb: { width: 34, height: 34, borderRadius: 7, objectFit: "cover", flexShrink: 0 },
+  feedThumb: { width: 52, height: 52, borderRadius: 9, objectFit: "cover", flexShrink: 0, cursor: "pointer", border: "1px solid rgba(191,164,106,0.3)" },
+  lightboxBg: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 130, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "pointer" },
+  lightboxImg: { maxWidth: "100%", maxHeight: "100%", borderRadius: 12, objectFit: "contain" },
+  emojiCustomInput: { width: 38, textAlign: "center", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(191,164,106,0.3)", borderRadius: 8, color: "#ece3d0", fontSize: 18, padding: "4px 0" },
 
   fightBtn: { background: "rgba(200,80,40,0.18)", border: "1px solid rgba(220,100,60,0.45)", color: "#e8a070", borderRadius: 8, padding: "3px 9px", fontSize: 12, cursor: "pointer", marginLeft: 8 },
   fightRecord: { fontSize: 12, color: "#bfa46a" },
@@ -395,6 +400,9 @@ export const styles = {
   fightScoreDmg: { fontSize: 11, color: "#9aa0b5" },
   fightVs: { fontFamily: SERIF, fontSize: 18, color: "#9aa0b5", fontStyle: "italic" },
   fightLogLine: { fontSize: 13, color: "#bfa46a", fontStyle: "italic" },
+  swordArena: { width: "100%", maxWidth: 360, padding: "8px 0" },
+  swordRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4 },
+  swordClash: { fontSize: 30, animation: "clashPulse 0.6s ease infinite" },
   bigFeedIcon: { fontSize: 20, flexShrink: 0 },
   bigFeedText: { flex: 1, fontSize: 14, color: "#ece3d0" },
   bigFeedAgo: { fontSize: 11, color: "#6f758c", flexShrink: 0 },

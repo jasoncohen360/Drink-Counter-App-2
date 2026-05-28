@@ -402,7 +402,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const partyDrinks = people.reduce((a, p) => a + drinkCountAtTime(p, liveNow), 0);
 
   // drink + vomit alerts. Drinks are host-toggled; vomits always notify.
-  const drinkNotifsOn = settings.drinkNotifs === true;
+  const drinkNotifsOn = settings.drinkNotifs !== false;
   const lastDrinkRef = useRef(null);
   useEffect(() => {
     // most recent log entry of any kind across everyone
@@ -1105,19 +1105,19 @@ function IndividualStats({ p, now, drinks = DRINKS, actions, canEdit = false }) 
                     <span style={styles.logTime}>{time}</span>
                     <span style={styles.logType}>{dd(e.type).emoji} {dd(e.type).label}</span>
                     <span style={styles.logSizeBadge}>{POUR[e.pour || DEFAULT_POUR].label}</span>
-                    {canEdit && <button style={styles.logEditBtn} onClick={() => setEditT(isEditing ? null : e._id)}>{isEditing ? "done" : "edit"}</button>}
-                    {canEdit && <button style={styles.logDelete} onClick={() => actions.deleteEntry(e._id)}>✕</button>}
+                    {canEdit && <button style={styles.logEditBtn} onClick={(ev) => { ev.stopPropagation(); setEditT(isEditing ? null : e._id); }}>{isEditing ? "done" : "edit"}</button>}
+                    {canEdit && <button style={styles.logDelete} onClick={(ev) => { ev.stopPropagation(); actions.deleteEntry(e._id); }}>✕</button>}
                   </div>
                   {isEditing && canEdit && (
                     <div style={styles.logControls}>
                       <div style={styles.logChipRow}>
                         {Object.entries(drinks).map(([k, d]) => (
-                          <button key={k} title={d.label} style={{ ...styles.logChip, ...(e.type === k ? styles.logChipOn : {}) }} onClick={() => actions.setDrinkType(e._id, k)}>{d.emoji}</button>
+                          <button key={k} title={d.label} style={{ ...styles.logChip, ...(e.type === k ? styles.logChipOn : {}) }} onClick={(ev) => { ev.stopPropagation(); actions.setDrinkType(e._id, k); }}>{d.emoji}</button>
                         ))}
                       </div>
                       <div style={styles.logChipRow}>
                         {Object.entries(POUR).map(([k, pr]) => (
-                          <button key={k} style={{ ...styles.logSize, ...((e.pour || DEFAULT_POUR) === k ? styles.logChipOn : {}) }} onClick={() => actions.setPour(e._id, k)}>{pr.label}</button>
+                          <button key={k} style={{ ...styles.logSize, ...((e.pour || DEFAULT_POUR) === k ? styles.logChipOn : {}) }} onClick={(ev) => { ev.stopPropagation(); actions.setPour(e._id, k); }}>{pr.label}</button>
                         ))}
                       </div>
                     </div>
@@ -1250,7 +1250,7 @@ function ChatBox({ chat, me, people = [], eventId, onPost, onDelete, onReact, no
   const [dm, setDm] = useState(null); // null = group; otherwise a personId
   const fileRef = useRef(null);
   const listRef = useRef(null);
-  const REACTIONS = ["❤️", "👍", "👎", "🥂", "❗"];
+  const REACTIONS = ["❤️", "👍", "👎", "🔥", "🥂"];
 
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [chat.length, dm]);
 
@@ -1283,8 +1283,17 @@ function ChatBox({ chat, me, people = [], eventId, onPost, onDelete, onReact, no
   const timeStr = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const react = (chatId, emoji) => {
     if (!me) return;
-    const who = (chat.find((c) => c.id === chatId)?.reactions?.[emoji]) || [];
-    onReact(chatId, me.id, emoji, who.includes(me.id));
+    const msg = chat.find((c) => c.id === chatId);
+    const reactions = (msg && msg.reactions) || {};
+    const mineNow = Object.entries(reactions).find(([em, ids]) => ids.includes(me.id));
+    if (mineNow && mineNow[0] === emoji) {
+      // tapping my own reaction again removes it
+      onReact(chatId, me.id, emoji, true);
+    } else {
+      // remove any prior reaction of mine, then add the new one
+      if (mineNow) onReact(chatId, me.id, mineNow[0], true);
+      onReact(chatId, me.id, emoji, false);
+    }
     setPickerFor(null);
   };
   const dmName = dm ? (people.find((p) => p.id === dm)?.name || "someone") : null;
@@ -1447,6 +1456,13 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
           <span style={styles.sheetBac}>~{bac.toFixed(3)} BAC{count > 0 && people.length > 1 ? ` · ${ord(place)} place` : ""}</span>
           {count > 0 && <div style={styles.sheetTally}>{Object.entries(tally).map(([t, n]) => <span key={t} style={styles.sheetTallyItem}>{(drinks[t] || { emoji: "🍸" }).emoji} {n}</span>)}</div>}
         </div>
+        {justLogged && (
+          <div style={styles.emptyPicPrompt}>
+            <span style={styles.emptyPicText}>📸 Snap your empty? (optional)</span>
+            <button style={styles.emptyPicBtn} onClick={() => photoRef.current?.click()}>Add pic</button>
+            <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={onEmptyPic} />
+          </div>
+        )}
         {flash && (
           <div style={styles.sheetFlashWrap}>
             <div style={styles.sheetFlashRing} />
@@ -1462,13 +1478,6 @@ function AddSheet({ me, people = [], now, drinks = DRINKS, actions, shotEnabled,
             </button>
           ))}
         </div>
-        {justLogged && (
-          <div style={styles.emptyPicPrompt}>
-            <span style={styles.emptyPicText}>Nice. Want to snap the empty? (optional)</span>
-            <button style={styles.emptyPicBtn} onClick={() => photoRef.current?.click()}>📷 Add pic</button>
-            <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={onEmptyPic} />
-          </div>
-        )}
         <div style={styles.sheetRow}>
           <button style={styles.sheetVomit} onClick={() => { onVomit(); onClose(); }}>🤮 Vomit</button>
           {shotEnabled && (
@@ -1510,10 +1519,18 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], figh
   });
   events.sort((a, b) => b.t - a.t);
   const [pickFor, setPickFor] = useState(null);
-  const REACTIONS = ["❤️", "👍", "🔥", "🥂", "👏"];
+  const [lightbox, setLightbox] = useState(null);
+  const REACTIONS = ["❤️", "👍", "👎", "🔥", "🥂"];
   const doReact = (target, emoji) => {
-    const who = (feedReactions[target] && feedReactions[target][emoji]) || [];
-    onReact && onReact(target, emoji, me && who.includes(me.id));
+    if (!me || !onReact) { setPickFor(null); return; }
+    const reactions = feedReactions[target] || {};
+    const mineNow = Object.entries(reactions).find(([em, ids]) => ids.includes(me.id));
+    if (mineNow && mineNow[0] === emoji) {
+      onReact(target, emoji, true);
+    } else {
+      if (mineNow) onReact(target, mineNow[0], true);
+      onReact(target, emoji, false);
+    }
     setPickFor(null);
   };
 
@@ -1534,7 +1551,7 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], figh
         <div style={styles.bigFeedRow} onClick={() => e.personId && onPerson && onPerson(e.personId)}>
           <span style={styles.bigFeedIcon}>{icon}</span>
           <span style={styles.bigFeedText}>{text}</span>
-          {e.kind === "log" && e.imageUrl && <img src={e.imageUrl} alt="" style={styles.feedThumb} />}
+          {e.kind === "log" && e.imageUrl && <img src={e.imageUrl} alt="" style={styles.feedThumb} onClick={(ev) => { ev.stopPropagation(); setLightbox(e.imageUrl); }} />}
           <span style={styles.bigFeedAgo}>{ago}</span>
         </div>
         <div style={styles.feedReactBar}>
@@ -1556,6 +1573,11 @@ function BigFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [], figh
     <div style={styles.bigFeedWrap}>
       <div style={styles.bigFeedHead}><span style={styles.feedDot} /> THE NIGHT, LIVE</div>
       {events.length === 0 ? <div style={styles.feedVEmpty}>Nothing yet — tap ＋ to log the first drink.</div> : events.map(row)}
+      {lightbox && (
+        <div style={styles.lightboxBg} onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="" style={styles.lightboxImg} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1647,6 +1669,36 @@ function FightOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) 
     actions={actions} onClose={onClose} />;
 }
 
+// A stylized retro sword drawn in SVG. Length scales with stat.
+function PixelSword({ length = 8, facing = "right", color = "#cfd8e3", broken = false, swinging = false }) {
+  const bladeLen = Math.max(28, Math.min(150, 28 + length * 4));
+  const W = 200, H = 60;
+  const cy = H / 2;
+  const hiltX = 18;
+  const bladeEnd = hiltX + bladeLen;
+  const breakPt = broken ? hiltX + bladeLen * 0.55 : bladeEnd;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 260, transform: facing === "left" ? "scaleX(-1)" : "none", ...(swinging ? { animation: "swordSwing 0.18s ease" } : {}) }}>
+      <rect x={hiltX - 14} y={cy - 3} width="10" height="6" fill="#7a5c2e" />
+      <rect x={hiltX - 5} y={cy - 4} width="8" height="8" fill="#9c7536" />
+      <rect x={hiltX} y={cy - 11} width="6" height="22" fill="#c9a24a" />
+      <rect x={hiltX + 6} y={cy - 4} width={Math.max(0, breakPt - hiltX - 6)} height="8" fill={color} />
+      <rect x={hiltX + 6} y={cy - 4} width={Math.max(0, breakPt - hiltX - 6)} height="3" fill="#ffffff" opacity="0.5" />
+      {!broken && <polygon points={`${bladeEnd},${cy - 4} ${bladeEnd + 12},${cy} ${bladeEnd},${cy + 4}`} fill={color} />}
+      {broken && <polygon points={`${breakPt},${cy - 4} ${breakPt + 7},${cy - 1} ${breakPt + 2},${cy + 2} ${breakPt + 8},${cy + 4} ${breakPt},${cy + 4}`} fill={color} />}
+    </svg>
+  );
+}
+function swordColorFor(stats) {
+  const b = stats?.breakdown || {};
+  const max = Math.max(b.beer || 0, b.wine || 0, b.shot || 0, b.cocktail || 0);
+  if (max === 0) return "#cfd8e3";
+  if ((b.wine || 0) === max) return "#c06a8e";
+  if ((b.shot || 0) === max) return "#e8c95a";
+  if ((b.cocktail || 0) === max) return "#5ad9c0";
+  return "#cfd8e3";
+}
+
 function FightActive({ fight, mySide, myKey, theirKey, me, challenger, opponent, drinks, liveNow, actions, onClose }) {
   // 3 phases: countdown(3s) → tap window(5s) → result
   const [phase, setPhase] = useState("countdown");
@@ -1699,10 +1751,19 @@ function FightActive({ fight, mySide, myKey, theirKey, me, challenger, opponent,
     const r = fight.result;
     const amWinner = r.winnerId === me.id;
     const isTie = !r.winnerId;
+    const cStats = r.challengerStats || swordStats(challenger, liveNow, drinks);
+    const oStats = r.opponentStats || swordStats(opponent, liveNow, drinks);
     return (
       <div style={styles.fightOverlay}>
         <div style={styles.fightGlyph}>{isTie ? "⚖️" : amWinner ? "🏆" : "💀"}</div>
         <div style={styles.fightHead}>{isTie ? "Dead tie!" : amWinner ? "You won!" : `${(amWinner ? me : (me.id === challenger.id ? opponent : challenger)).name} won`}</div>
+        <div style={styles.swordArena}>
+          <div style={styles.swordRow}>
+            <PixelSword length={cStats.length} facing="right" color={swordColorFor(cStats)} broken={r.aBroke} />
+            <span style={styles.swordClash}>⚔️</span>
+            <PixelSword length={oStats.length} facing="left" color={swordColorFor(oStats)} broken={r.bBroke} />
+          </div>
+        </div>
         <div style={styles.fightScoreRow}>
           <div style={styles.fightScoreSide}>
             <div style={styles.fightScoreName}>{challenger.name}</div>
@@ -1742,10 +1803,14 @@ function FightActive({ fight, mySide, myKey, theirKey, me, challenger, opponent,
     );
   }
 
-  // tap phase
+  // tap phase — my sword grows a touch with each tap and swings
+  const myStats = swordStats(mySide === "challenger" ? challenger : opponent, liveNow, drinks);
   return (
     <div style={styles.fightOverlay} onClick={tap} onTouchStart={tap}>
       <div style={styles.fightTapPrompt}>TAP! TAP! TAP!</div>
+      <div style={styles.swordArena}>
+        <PixelSword key={taps} length={myStats.length + taps * 0.15} facing="right" color={swordColorFor(myStats)} swinging={taps > 0} />
+      </div>
       <div style={styles.fightTapCount}>{taps}</div>
       <div style={styles.fightSub}>swing that sword</div>
     </div>
@@ -1820,7 +1885,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
   const [teams, setTeams] = useState(JSON.parse(JSON.stringify(init.teams || {})));
   const [teamsLocked, setTeamsLocked] = useState(init.teamsLocked === true);
   const setTeamField = (id, field, val) => setTeams((t) => ({ ...t, [id]: { ...(t[id] || {}), [field]: val } }));
-  const [drinkNotifs, setDrinkNotifs] = useState(init.drinkNotifs === true);
+  const [drinkNotifs, setDrinkNotifs] = useState(init.drinkNotifs !== false);
   const [fightsEnabled, setFightsEnabled] = useState(init.fightsEnabled === true);
   const setSexWeight = (sex, sz, v) => setSexWeights((w) => ({ ...w, [sex]: { ...w[sex], [sz]: v } }));
   const [newName, setNewName] = useState("");
@@ -1896,7 +1961,10 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
           ))}
           <div style={styles.settingHint}>Standard drink ≈ 14g. Higher = stronger effect on BAC.</div>
           <div style={styles.addDrinkRow}>
-            <div style={styles.emojiPickRow}>{DRINK_EMOJIS.map((em) => <button key={em} style={{ ...styles.emojiPick, ...(newEmoji === em ? styles.emojiPickOn : {}) }} onClick={() => setNewEmoji(em)}>{em}</button>)}</div>
+            <div style={styles.emojiPickRow}>
+              {DRINK_EMOJIS.map((em) => <button key={em} style={{ ...styles.emojiPick, ...(newEmoji === em ? styles.emojiPickOn : {}) }} onClick={() => setNewEmoji(em)}>{em}</button>)}
+              <input style={styles.emojiCustomInput} value={DRINK_EMOJIS.includes(newEmoji) ? "" : newEmoji} onChange={(e) => setNewEmoji(e.target.value.slice(0, 2) || "🍸")} placeholder="✏️" maxLength={2} title="Type your own emoji" />
+            </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <input style={{ ...styles.chatInput, flex: 1 }} placeholder="Custom drink name" value={newName} onChange={(e) => setNewName(e.target.value)} />
               <input style={styles.numInput} type="number" step="1" value={newAlc} onChange={(e) => setNewAlc(e.target.value)} />

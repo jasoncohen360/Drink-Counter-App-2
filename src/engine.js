@@ -5,7 +5,7 @@
 export const DRINKS = {
   beer: { label: "Beer", emoji: "🍺", alcG: 14 },
   wine: { label: "Wine", emoji: "🍷", alcG: 14 },
-  cocktail: { label: "Cocktail", emoji: "🍸", alcG: 17 },
+  cocktail: { label: "Cocktail", emoji: "🍹", alcG: 17 },
   shot: { label: "Shot", emoji: "🥃", alcG: 14 },
 };
 
