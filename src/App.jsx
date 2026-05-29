@@ -432,7 +432,6 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const { people, chat, shotCalls, fights = [], finds = [], settings, actions, joinCode, eventName } = ev;
   const chaseOn = settings.chickenChase === true && Array.isArray(settings.chickens) && settings.chickens.length > 0;
   const chickenIds = settings.chickens || [];
-  const amChicken = me && chickenIds.includes(me.id);
   const drinksMap = getDrinks(settings);
   const sizesMap = getSizes(settings);
   const theme = getTheme(settings);
@@ -471,6 +470,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const lastChatRef = useRef(chat.length);
 
   const me = people.find((p) => p.id === myPersonId);
+  const amChicken = me && chickenIds.includes(me.id);
   const myPhone = (typeof localStorage !== "undefined" && localStorage.getItem(LS_PHONE)) || "";
   const amHost = me?.role === "host" || (myPhone && myPhone === DEVELOPER_PHONE);
   const isDeveloper = myPhone && myPhone === DEVELOPER_PHONE;
