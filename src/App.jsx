@@ -481,20 +481,17 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
     return () => clearTimeout(id);
   }, [activeShot]);
   // my fight record on the night
-  const myFightRecord = me ? fights.reduce((acc, f) => {
-    if (f.status !== "done" || !f.winnerId) return acc;
-    const involved = f.challengerId === me.id || f.opponentId === me.id;
-    if (!involved) return acc;
-    if (f.winnerId === me.id) return { ...acc, wins: acc.wins + 1 };
-    return { ...acc, losses: acc.losses + 1 };
-  }, { wins: 0, losses: 0 }) : { wins: 0, losses: 0 };
-  const fightRecord = (pid) => fights.reduce((acc, f) => {
-    if (f.status !== "done" || !f.winnerId) return acc;
+  const tallyRecord = (pid) => fights.reduce((acc, f) => {
+    if (f.status !== "done") return acc;
     const involved = f.challengerId === pid || f.opponentId === pid;
     if (!involved) return acc;
+    // a finished fight with no winner is a tie
+    if (!f.winnerId) return { ...acc, ties: acc.ties + 1 };
     if (f.winnerId === pid) return { ...acc, wins: acc.wins + 1 };
     return { ...acc, losses: acc.losses + 1 };
-  }, { wins: 0, losses: 0 });
+  }, { wins: 0, losses: 0, ties: 0 });
+  const myFightRecord = me ? tallyRecord(me.id) : { wins: 0, losses: 0, ties: 0 };
+  const fightRecord = (pid) => tallyRecord(pid);
 
   // notify me when someone reacts to one of my feed items
   const feedRx = ev.feedReactions || {};
@@ -1024,7 +1021,7 @@ function PersonCard({ p, now, drinks = DRINKS, sizes = SIZES, expanded, toggleEx
           <div style={styles.bodyline}>
             {(sizes[p.size]?.label) || "Medium"} · {p.sex}
             {vomits > 0 && <span style={styles.vomitTag}> · 🤮 ×{vomits}</span>}
-            {fightsOn && (record.wins > 0 || record.losses > 0) && <span style={styles.fightRecord}> · ⚔️ {record.wins}-{record.losses}</span>}
+            {fightsOn && (record.wins > 0 || record.losses > 0 || record.ties > 0) && <span style={styles.fightRecord}> · 🏓 {record.wins}-{record.losses}{record.ties ? "-" + record.ties : ""}</span>}
             <button style={styles.editBtn} onClick={onEdit}>edit</button>
             {fightsOn && !isMe && onChallenge && <button style={styles.fightBtn} onClick={(e) => { e.stopPropagation(); onChallenge(p); }}>🏓 Pong</button>}
           </div>
@@ -1662,6 +1659,11 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
   const [ball, setBall] = useState(null);             // {x, depth, made}
   const [splash, setSplash] = useState(null);
   const [lastResult, setLastResult] = useState(null); // "splash!" | "miss"
+  const [streak, setStreak] = useState(0);
+  const [hype, setHype] = useState(null); // "Heating up 🔥" etc
+  const [lcAvailable, setLcAvailable] = useState(true); // liquid courage, 1x/game
+  const [lcArmed, setLcArmed] = useState(false);        // is this throw a LC throw?
+  const [showLcInfo, setShowLcInfo] = useState(false);
   const submittedRef = useRef(false);
   const rafRef = useRef(null);
   const dirRef = useRef(1);
@@ -1674,20 +1676,20 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
   // sweep animation for aim (horizontal) and power (depth)
   useEffect(() => {
     if (stage !== "aim" && stage !== "power") return;
-    const speed = stage === "aim" ? 0.018 : 0.022; // power sweeps a touch faster
-    let raf;
+    const speed = stage === "aim" ? 0.018 : 0.022;
     const tick = () => {
       let m = markerRef.current + dirRef.current * speed;
       if (m >= 1) { m = 1; dirRef.current = -1; }
       if (m <= 0) { m = 0; dirRef.current = 1; }
       markerRef.current = m;
       setMarker(m);
-      raf = requestAnimationFrame(tick);
+      rafRef.current = requestAnimationFrame(tick); // always store latest id
     };
-    raf = requestAnimationFrame(tick);
-    rafRef.current = raf;
-    return () => cancelAnimationFrame(raf);
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [stage]);
+
+  const stopSweep = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } };
 
   const startThrow = () => {
     markerRef.current = 0.5; dirRef.current = 1; setMarker(0.5);
@@ -1696,23 +1698,26 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
 
   const lockTap = () => {
     if (stage === "aim") {
-      setLockedAim(markerRef.current);
-      // restart sweep for power
+      stopSweep();                       // kill the loop instantly — no late drift
+      const locked = markerRef.current;
+      setLockedAim(locked);
+      setMarker(locked);                 // freeze visual exactly where tapped
       markerRef.current = 0; dirRef.current = 1; setMarker(0);
       setStage("power");
     } else if (stage === "power") {
+      stopSweep();
       const power = markerRef.current;
       fireBall(lockedAim, power);
     }
   };
 
   const fireBall = (aimX, power) => {
-    cancelAnimationFrame(rafRef.current);
+    stopSweep();
     setStage("flying");
-    const landX = 8 + aimX * 84;             // percent across (8..92)
-    const landDepth = power;                  // 0..1 front..back
+    const wasLC = lcArmed;
+    const landX = 8 + aimX * 84;
+    const landDepth = power;
     const targetY = yMin + landDepth * (yMax - yMin);
-    // hit detection
     let hitIdx = null, bestDist = 999;
     standing.forEach((idx) => {
       const p = cupPositions[idx]; if (!p) return;
@@ -1722,27 +1727,52 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
     const isHit = bestDist < 7;
     setBall({ x: landX, depth: landDepth, made: isHit });
     setTimeout(() => {
+      let cupsCleared = 0;
       if (isHit && hitIdx != null) {
-        setStanding((s) => s.filter((i) => i !== hitIdx));
-        setMade((m) => m + 1);
+        // liquid courage: also clear the nearest OTHER standing cup
+        let toRemove = [hitIdx];
+        if (wasLC) {
+          let secondIdx = null, sBest = 999;
+          standing.forEach((idx) => {
+            if (idx === hitIdx) return;
+            const p = cupPositions[idx]; if (!p) return;
+            const dd = Math.hypot(p.x - cupPositions[hitIdx].x, p.y - cupPositions[hitIdx].y);
+            if (dd < sBest) { sBest = dd; secondIdx = idx; }
+          });
+          if (secondIdx != null) toRemove.push(secondIdx);
+        }
+        cupsCleared = toRemove.length;
+        setStanding((s) => s.filter((i) => !toRemove.includes(i)));
+        setMade((m) => m + cupsCleared);
         setSplash(hitIdx);
-        setLastResult("splash");
+        setLastResult(wasLC ? "splashLC" : "splash");
         setTimeout(() => setSplash(null), 600);
+        // streak hype
+        setStreak((st) => {
+          const ns = st + 1;
+          if (ns === 2) setHype("Heating up 🔥");
+          else if (ns >= 3) setHype("ON FIRE 🔥🔥");
+          return ns;
+        });
       } else {
         setLastResult("miss");
+        setStreak(0);
+        setHype(null);
       }
+      if (wasLC) { setLcArmed(false); setLcAvailable(false); }
       const used = shotsUsed + 1;
       setShotsUsed(used);
       setBall(null);
       setTimeout(() => {
         setLastResult(null);
-        if (used >= PONG_SHOTS || standing.length - (isHit ? 1 : 0) <= 0) {
-          finishTurn(made + (isHit ? 1 : 0));
+        const remaining = standing.length - cupsCleared;
+        if (used >= PONG_SHOTS || remaining <= 0) {
+          finishTurn(made + cupsCleared);
         } else {
           markerRef.current = 0.5; dirRef.current = 1; setMarker(0.5);
           setStage("aim");
         }
-      }, 700);
+      }, 750);
     }, 650);
   };
 
@@ -1810,8 +1840,9 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
         <div style={styles.howtoBox}>
           <div style={styles.howtoRow}><span style={styles.howtoStep}>1</span><span>Tap once to lock your <b>aim</b> — a marker sweeps left & right. Tap when it's lined up with a cup.</span></div>
           <div style={styles.howtoRow}><span style={styles.howtoStep}>2</span><span>Tap again to lock your <b>power</b> — a bar sweeps near→far. Low = front cups, high = back cups.</span></div>
-          <div style={styles.howtoRow}><span style={styles.howtoStep}>3</span><span>Ball throws to that spot. Sink as many as you can — <b>10 shots, 10 cups.</b></span></div>
-          <div style={styles.howtoRow}><span style={styles.howtoStep}>🏆</span><span>Most cups sunk wins. Good luck.</span></div>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>3</span><span>Ball throws to that spot. Sink as many as you can.</span></div>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>🏆</span><span>Most cups sunk wins. <b>10 shots, 10 cups.</b></span></div>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>🥃</span><span><b>Liquid Courage</b> (once a game): arm it before a throw to clear 2 cups if you sink it. Risky — miss and it's gone.</span></div>
         </div>
         <button style={styles.fightAccept} onClick={startThrow}>Let's play 🏓</button>
       </div>
@@ -1826,17 +1857,39 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
         <span>🥤 {standing.length} left</span>
         <span>🏀 {PONG_SHOTS - shotsUsed} shots</span>
       </div>
+      {hype && streak >= 2 && <div style={styles.pongHype} key={streak}>{hype}{streak >= 3 ? ` ×${streak}` : ""}</div>}
       <div style={styles.pongTableWrap}>
         <PongTable cupPositions={cupPositions} standing={standing} ball={ball} splash={splash}
-          stage={stage} marker={marker} lockedAim={lockedAim} yMin={yMin} yMax={yMax} />
+          stage={stage} marker={marker} lockedAim={lockedAim} yMin={yMin} yMax={yMax} lcArmed={lcArmed} />
+      </div>
+      <div style={styles.pongControls} onClick={(e) => e.stopPropagation()}>
+        {lcAvailable && (
+          <div style={styles.lcWrap}>
+            <button style={{ ...styles.lcBtn, ...(lcArmed ? styles.lcBtnOn : {}) }}
+              onClick={() => setLcArmed((v) => !v)}>🥃 Liquid Courage{lcArmed ? " — ARMED" : ""}</button>
+            <button style={styles.lcInfo} onClick={() => setShowLcInfo(true)}>ⓘ</button>
+          </div>
+        )}
       </div>
       <div style={styles.pongBottom}>
+        {lastResult === "splashLC" && <div style={styles.pongSplashTxt}>DOUBLE! 💦💦</div>}
         {lastResult === "splash" && <div style={styles.pongSplashTxt}>SPLASH! 💦</div>}
         {lastResult === "miss" && <div style={styles.pongMissTxt}>miss…</div>}
-        {!lastResult && stage === "aim" && <div style={styles.pongHint}>👆 tap to lock <b>AIM</b> (left ↔ right)</div>}
+        {!lastResult && stage === "aim" && <div style={styles.pongHint}>👆 tap to lock <b>AIM</b> (left ↔ right){lcArmed ? " · 🥃 armed!" : ""}</div>}
         {!lastResult && stage === "power" && <div style={styles.pongHint}>👆 tap to lock <b>POWER</b> (near ↔ far)</div>}
         {!lastResult && stage === "flying" && <div style={styles.pongHint}>🤞</div>}
       </div>
+      {showLcInfo && (
+        <div style={styles.modalBg} onClick={(e) => { e.stopPropagation(); setShowLcInfo(false); }}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 40, textAlign: "center" }}>🥃</div>
+            <div style={{ ...styles.modalTitle, textAlign: "center" }}>Liquid Courage</div>
+            <p style={styles.confirmText}>Once per game, arm Liquid Courage before a throw. If you sink it, you clear <b>two</b> cups instead of one — the cup you hit plus its nearest neighbor.</p>
+            <p style={styles.confirmText}>High risk, high reward: if you miss, you've burned your one shot at it for the game. Use it wisely.</p>
+            <button style={styles.fightAccept} onClick={() => setShowLcInfo(false)}>Got it</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1859,37 +1912,29 @@ function pyramidPositions(n) {
 }
 
 // the visual table — angled perspective via CSS transform, SVG cups + ball
-function PongTable({ cupPositions, standing, ball, splash, stage, marker = 0.5, lockedAim = 0.5, yMin = 18, yMax = 60 }) {
-  // marker position: during aim it sweeps X; during power it sweeps depth (Y)
+function PongTable({ cupPositions, standing, ball, splash, stage, marker = 0.5, lockedAim = 0.5, yMin = 18, yMax = 60, lcArmed = false }) {
   const aimX = stage === "aim" ? 8 + marker * 84 : 8 + lockedAim * 84;
   const powerDepth = stage === "power" ? marker : 0;
   return (
     <div style={styles.pongPerspective}>
       <div style={styles.pongTable}>
-        {/* table center line + far edge for depth cues */}
         <div style={styles.pongTableLine} />
-        {/* cups (sorted so back cups render first, front overlap them) */}
-        {cupPositions.map((p, idx) => ({ p, idx })).sort((a, b) => a.p.y - b.p.y).map(({ p, idx }) => {
+        {/* top-down cups: clean circles */}
+        {cupPositions.map((p, idx) => {
           if (!standing.includes(idx)) return null;
-          // cups further back are slightly smaller for depth
-          const scale = 0.78 + (p.y - yMin) / (yMax - yMin || 1) * 0.32;
           return (
-            <div key={idx} style={{ ...styles.pongCup, left: `${p.x}%`, top: `${p.y}%`, transform: `translate(-50%,-50%) scale(${scale})` }}>
-              <div style={styles.pongCupBody} />
-              <div style={styles.pongCupRim} />
+            <div key={idx} style={{ ...styles.pongCup, left: `${p.x}%`, top: `${p.y}%` }}>
+              <div style={styles.pongCupOuter}><div style={styles.pongCupInner} /></div>
               {splash === idx && <div style={styles.pongSplash}>💦</div>}
             </div>
           );
         })}
-        {/* AIM guide: vertical line sweeping left-right */}
         {(stage === "aim" || stage === "power") && (
-          <div style={{ ...styles.pongAimLine, left: `${aimX}%`, opacity: stage === "aim" ? 1 : 0.5 }} />
+          <div style={{ ...styles.pongAimLine, left: `${aimX}%`, opacity: stage === "aim" ? 1 : 0.5, ...(lcArmed ? { background: "linear-gradient(180deg, rgba(232,160,112,0.2), #e8a070)", boxShadow: "0 0 10px rgba(232,160,112,0.8)" } : {}) }} />
         )}
-        {/* POWER guide: a dot travelling up the aim line showing depth */}
         {stage === "power" && (
           <div style={{ ...styles.pongPowerDot, left: `${aimX}%`, top: `${yMin + powerDepth * (yMax - yMin)}%` }} />
         )}
-        {/* ball + shadow (arcs from bottom to landing spot) */}
         {ball && (
           <>
             <div style={{ ...styles.pongBallShadow, left: `${ball.x}%`, top: `${yMin + ball.depth * (yMax - yMin)}%` }} />
