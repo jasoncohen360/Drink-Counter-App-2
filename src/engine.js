@@ -198,3 +198,42 @@ export function teamStats(people, settings, now, drinks) {
 // The legend: Wade Boggs and a flight's worth of beers.
 export const BOGGS_NUMBER = 107;
 
+// ============================================================
+// CHICKEN CHASE — flock scoring
+// ============================================================
+// A "flock" = a chicken plus everyone who has found & joined them.
+// Flock score = sum of members' drinks. If countFromStart is false,
+// members only count drinks logged AFTER they joined the flock.
+export function isChicken(personId, settings) {
+  return Array.isArray(settings?.chickens) && settings.chickens.includes(personId);
+}
+export function flockMembers(chickenId, people) {
+  // the chicken themself + anyone whose flock === chickenId
+  return people.filter((p) => p.id === chickenId || p.flock === chickenId);
+}
+export function flockScore(chickenId, people, now, drinks, countFromStart) {
+  const members = flockMembers(chickenId, people);
+  let total = 0;
+  for (const m of members) {
+    const isTheChicken = m.id === chickenId;
+    const since = (!countFromStart && !isTheChicken && m.flockJoinedAt) ? m.flockJoinedAt : 0;
+    total += (m.log || []).filter((e) => e.type !== "vomit" && e.t >= since && e.t <= now).length;
+  }
+  return total;
+}
+export function flockStandings(people, settings, now, drinks) {
+  const chickens = (settings?.chickens || []);
+  const cfs = settings?.chickenCountFromStart === true;
+  return chickens.map((cid) => {
+    const chicken = people.find((p) => p.id === cid);
+    const members = flockMembers(cid, people);
+    return {
+      chickenId: cid,
+      name: chicken?.name || "?",
+      memberCount: members.length,
+      found: members.length > 1, // has at least one finder joined
+      score: flockScore(cid, people, now, drinks, cfs),
+    };
+  }).sort((a, b) => b.score - a.score);
+}
+

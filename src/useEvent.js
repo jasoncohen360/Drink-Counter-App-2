@@ -66,6 +66,35 @@ export async function findEventByCode(code) {
   return data;
 }
 
+// Find host-created people in this event who haven't been claimed yet and whose
+// name matches what the joiner typed (case-insensitive). Used for "is this you?"
+export async function findClaimablePeople(eventId, name) {
+  const n = (name || "").trim().toLowerCase();
+  if (!n) return [];
+  const { data, error } = await supabase
+    .from("people")
+    .select("*")
+    .eq("event_id", eventId);
+  if (error) throw error;
+  return (data || []).filter((p) =>
+    (p.name || "").trim().toLowerCase() === n &&
+    !p.claimed &&
+    !p.phone // host-created people have no phone attached
+  );
+}
+
+// Claim an existing (host-created) person as yourself: attach your phone + mark claimed.
+export async function claimPerson(personId, phone) {
+  const { data, error } = await supabase
+    .from("people")
+    .update({ claimed: true, phone: phone || null })
+    .eq("id", personId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 // Join an existing event as a new person. Returns the person row.
 export async function joinEvent({ eventId, name, size, sex, weightLb, phone, team }) {
   const { data, error } = await supabase
@@ -73,6 +102,7 @@ export async function joinEvent({ eventId, name, size, sex, weightLb, phone, tea
     .insert({
       event_id: eventId, name: name || "Guest", phone: phone || null,
       size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "guest", team: team || null,
+      claimed: true,
     })
     .select()
     .single();
@@ -149,6 +179,7 @@ export function useEvent(eventId) {
   const [reactions, setReactions] = useState([]);
   const [shotCalls, setShotCalls] = useState([]);
   const [fights, setFights] = useState([]);
+  const [finds, setFinds] = useState([]);
   const [pendingLogs, setPendingLogs] = useState([]); // optimistic drinks shown instantly
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -157,7 +188,7 @@ export function useEvent(eventId) {
   const reload = useCallback(async () => {
     if (!eventId) return;
     try {
-      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }, { data: rx }, { data: fg }] = await Promise.all([
+      const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }, { data: rx }, { data: fg }, { data: fd }] = await Promise.all([
         supabase.from("events").select("*").eq("id", eventId).single(),
         supabase.from("people").select("*").eq("event_id", eventId),
         supabase.from("drink_log").select("*").eq("event_id", eventId),
@@ -165,6 +196,7 @@ export function useEvent(eventId) {
         supabase.from("shot_calls").select("*").eq("event_id", eventId),
         supabase.from("reactions").select("*").eq("event_id", eventId),
         supabase.from("fights").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(100),
+        supabase.from("finds").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(200),
       ]);
       setEvent(ev || null);
       setPeople(ppl || []);
@@ -173,6 +205,7 @@ export function useEvent(eventId) {
       setShotCalls(sc || []);
       setReactions(rx || []);
       setFights(fg || []);
+      setFinds(fd || []);
       setError(null);
     } catch (e) {
       setError(e.message || "Failed to load event");
@@ -212,6 +245,8 @@ export function useEvent(eventId) {
         () => supabase.from("reactions").select("*").eq("event_id", eventId).then(({ data }) => data && setReactions(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "fights", filter: `event_id=eq.${eventId}` },
         () => supabase.from("fights").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(100).then(({ data }) => data && setFights(data)))
+      .on("postgres_changes", { event: "*", schema: "public", table: "finds", filter: `event_id=eq.${eventId}` },
+        () => supabase.from("finds").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(200).then(({ data }) => data && setFinds(data)))
       .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `id=eq.${eventId}` },
         () => supabase.from("events").select("*").eq("id", eventId).single().then(({ data }) => data && setEvent(data)))
       .subscribe();
@@ -237,6 +272,9 @@ export function useEvent(eventId) {
       weightLb: p.weight_lb,
       role: p.role,
       team: p.team || null,
+      flock: p.flock || null,
+      flockJoinedAt: p.flock_joined_at ? new Date(p.flock_joined_at).getTime() : null,
+      claimed: p.claimed === true,
       log: [...realLogs, ...myPending].sort((a, b) => a.t - b.t),
     };
   });
@@ -367,6 +405,29 @@ export function useEvent(eventId) {
     expireFight: async (fightId) => {
       await supabase.from("fights").update({ status: "expired" }).eq("id", fightId).eq("status", "pending");
     },
+    // --- Chicken Chase ---
+    reportFind: async ({ finderId, finderName, chickenId, chickenName }) => {
+      // avoid duplicate pending finds from the same finder for the same chicken
+      const { data: existing } = await supabase.from("finds").select("id")
+        .eq("event_id", eventId).eq("finder_id", finderId).eq("chicken_id", chickenId).eq("status", "pending");
+      if (existing && existing.length) return;
+      await supabase.from("finds").insert({
+        event_id: eventId, finder_id: finderId, finder_name: finderName,
+        chicken_id: chickenId, chicken_name: chickenName, status: "pending",
+      });
+    },
+    confirmFind: async (findId, finderId, chickenId) => {
+      await supabase.from("finds").update({ status: "confirmed" }).eq("id", findId);
+      // finder joins the chicken's flock
+      await supabase.from("people").update({ flock: chickenId, flock_joined_at: new Date().toISOString() }).eq("id", finderId);
+    },
+    rejectFind: async (findId) => {
+      await supabase.from("finds").update({ status: "rejected" }).eq("id", findId);
+    },
+    setChickens: async (chickenIds, settings) => {
+      const next = { ...settings, chickens: chickenIds, chickenChase: true };
+      await supabase.from("events").update({ settings: next }).eq("id", eventId);
+    },
     saveSettings: async (settings) => {
       await supabase.from("events").update({ settings }).eq("id", eventId);
     },
@@ -401,6 +462,12 @@ export function useEvent(eventId) {
     endedAt: f.ended_at ? new Date(f.ended_at).getTime() : null,
   }));
 
+  const assembledFinds = finds.map((f) => ({
+    id: f.id, finderId: f.finder_id, finderName: f.finder_name,
+    chickenId: f.chicken_id, chickenName: f.chicken_name, status: f.status,
+    t: new Date(f.created_at).getTime(),
+  }));
+
   return {
     loading,
     error,
@@ -409,6 +476,7 @@ export function useEvent(eventId) {
     chat: assembledChat,
     shotCalls: assembledShotCalls,
     fights: assembledFights,
+    finds: assembledFinds,
     feedReactions,
     settings: event?.settings || {},
     phase: event?.phase || "live",

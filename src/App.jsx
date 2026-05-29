@@ -2,14 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER, isChicken, flockMembers, flockScore, flockStandings,
 } from "./engine.js";
 
 // tiny convenience wrappers for team display
 const teamLabel = (settings, id) => teamMeta(settings, id)?.label || "";
 const teamColor = (settings, id) => teamMeta(settings, id)?.color || "#999";
 const teamEmoji = (settings, id) => teamMeta(settings, id)?.emoji || "🚩";
-import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto, deleteEvent, leaveEventHistory, postSuggestion, fetchSuggestions } from "./useEvent.js";
+import { useEvent, createEvent, findEventByCode, joinEvent, eventsForPhone, uploadChatPhoto, deleteEvent, leaveEventHistory, postSuggestion, fetchSuggestions, findClaimablePeople, claimPerson } from "./useEvent.js";
 import { styles, GLOBAL_CSS, SERIF } from "./styles.js";
 
 // localStorage keys — remember who you are + which event you're in, on THIS device
@@ -304,18 +304,34 @@ function JoinScreen({ phone, name, setName, onBack, onJoined, prefillCode = "" }
   const [sex, setSex] = useState(() => localStorage.getItem(LS_SEX) || "male");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [claimChoice, setClaimChoice] = useState(null); // { ev, matches: [people] }
+
+  const finishJoin = async (ev) => {
+    try { localStorage.setItem(LS_SIZE, size); localStorage.setItem(LS_SEX, sex); } catch (e) {}
+    const person = await joinEvent({ eventId: ev.id, name, size, sex, weightLb: weightFor(size, sex), phone });
+    onJoined(ev.id, person.id);
+  };
 
   const go = async () => {
     setBusy(true); setErr("");
     try {
       const ev = await findEventByCode(code);
       if (!ev) { setErr("No party found with that code. Double-check it?"); setBusy(false); return; }
-      try { localStorage.setItem(LS_SIZE, size); localStorage.setItem(LS_SEX, sex); } catch (e) {}
-      const person = await joinEvent({ eventId: ev.id, name, size, sex, weightLb: weightFor(size, sex), phone });
-      onJoined(ev.id, person.id);
+      // does the host already have an unclaimed person with this name?
+      const matches = await findClaimablePeople(ev.id, name);
+      if (matches.length > 0) { setClaimChoice({ ev, matches }); setBusy(false); return; }
+      await finishJoin(ev);
     } catch (e) {
       setErr(e.message || "Could not join."); setBusy(false);
     }
+  };
+
+  const claimExisting = async (personRow) => {
+    setBusy(true);
+    try {
+      const claimed = await claimPerson(personRow.id, phone);
+      onJoined(claimChoice.ev.id, claimed.id);
+    } catch (e) { setErr(e.message || "Could not claim."); setBusy(false); setClaimChoice(null); }
   };
 
   return (
@@ -348,6 +364,19 @@ function JoinScreen({ phone, name, setName, onBack, onJoined, prefillCode = "" }
         {err && <div style={{ color: "#d9533b", fontSize: 13 }}>{err}</div>}
         <button style={styles.primaryBtn} disabled={busy} onClick={go}>{busy ? "Joining…" : "Join the party →"}</button>
       </div>
+
+      {claimChoice && (
+        <div style={styles.modalBg} onClick={() => setClaimChoice(null)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={{ ...styles.modalTitle, textAlign: "center" }}>Is this you?</div>
+            <p style={styles.confirmText}>The host already added {claimChoice.matches.length === 1 ? `a "${claimChoice.matches[0].name}"` : `someone with this name`} to the party. Claim that spot so your drinks line up — or join as a new person.</p>
+            {claimChoice.matches.map((m) => (
+              <button key={m.id} style={styles.claimBtn} onClick={() => claimExisting(m)}>✅ Yes, I'm {m.name}{m.role === "host" ? " (host)" : ""}</button>
+            ))}
+            <button style={styles.cancelBtn} onClick={async () => { const ev = claimChoice.ev; setClaimChoice(null); setBusy(true); try { await finishJoin(ev); } catch (e) { setErr(e.message); setBusy(false); } }}>No, I'm someone new</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -400,7 +429,10 @@ function themedPage(settings, extra = {}) {
 // LIVE SCREEN
 // ============================================================
 function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
-  const { people, chat, shotCalls, fights = [], settings, actions, joinCode, eventName } = ev;
+  const { people, chat, shotCalls, fights = [], finds = [], settings, actions, joinCode, eventName } = ev;
+  const chaseOn = settings.chickenChase === true && Array.isArray(settings.chickens) && settings.chickens.length > 0;
+  const chickenIds = settings.chickens || [];
+  const amChicken = me && chickenIds.includes(me.id);
   const drinksMap = getDrinks(settings);
   const sizesMap = getSizes(settings);
   const theme = getTheme(settings);
@@ -416,6 +448,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [confirmVomitId, setConfirmVomitId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showChickenAssign, setShowChickenAssign] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [chatSeen, setChatSeen] = useState(Date.now());
   const [stars, setStars] = useState(() => {
@@ -691,6 +724,10 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
           onClose={() => setActiveFight(null)} />
       )}
 
+      {showChickenAssign && <ChickenAssign people={people} settings={settings} actions={actions} onClose={() => setShowChickenAssign(false)} />}
+
+      {amChicken && <ChickenConfirmPanel finds={finds} me={me} actions={actions} />}
+
       {banner && (
         <div style={{ ...styles.banner, ...(banner.big ? styles.bannerBig : {}) }}
           onClick={() => { if (banner.personId) { setStatsFocusId(banner.personId); setTab("stats"); } setBanner(null); }}
@@ -733,16 +770,21 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
 
       {/* ---- LEADERBOARD TAB ---- */}
       {tab === "leaderboard" && (
-        partyDrinks > 0 ? (
-          <>
-            {ev.event?.cover_url && <div style={{ ...styles.coverBanner, backgroundImage: `url(${ev.event.cover_url})` }}><div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{eventName}</span></div></div>}
-            {(settings.teamCount || 0) > 0 && <TeamStandings people={people} settings={settings} now={liveNow} drinks={drinksMap} />}
-            <Leaderboard people={people} now={liveNow} accent={theme.accent} stars={stars} toggleStar={toggleStar} />
-            <GroupStats people={people} now={liveNow} drinks={drinksMap} />
-            <FavoriteDrinksChart people={people} drinks={drinksMap} />
-            <TimelineGraph people={people} now={liveNow} metric={metric} setMetric={setMetric} legalLimit={legalLimit} />
-          </>
-        ) : <div style={styles.emptyState}>No drinks yet. Tap the <b>＋</b> below to start logging.</div>
+        <>
+          {ev.event?.cover_url && <div style={{ ...styles.coverBanner, backgroundImage: `url(${ev.event.cover_url})` }}><div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{eventName}</span></div></div>}
+          {amHost && <button style={styles.chaseSetupBtn} onClick={() => setShowChickenAssign(true)}>🐔 {chaseOn ? "Manage Chicken Chase" : "Start a Chicken Chase"}</button>}
+          {chaseOn && <ChaseBoard people={people} settings={settings} finds={finds} me={me} now={liveNow} drinks={drinksMap} actions={actions} />}
+          {chaseOn && <BarChecklist settings={settings} eventId={ev.event?.id} isHost={amHost} actions={actions} />}
+          {partyDrinks > 0 ? (
+            <>
+              {(settings.teamCount || 0) > 0 && <TeamStandings people={people} settings={settings} now={liveNow} drinks={drinksMap} />}
+              <Leaderboard people={people} now={liveNow} accent={theme.accent} stars={stars} toggleStar={toggleStar} chickenIds={chickenIds} />
+              <GroupStats people={people} now={liveNow} drinks={drinksMap} />
+              <FavoriteDrinksChart people={people} drinks={drinksMap} />
+              <TimelineGraph people={people} now={liveNow} metric={metric} setMetric={setMetric} legalLimit={legalLimit} />
+            </>
+          ) : (!chaseOn && <div style={styles.emptyState}>No drinks yet. Tap the <b>＋</b> below to start logging.</div>)}
+        </>
       )}
 
       {/* ---- STATS TAB (everyone's details, starred first) ---- */}
@@ -974,10 +1016,15 @@ function TeamStandings({ people, settings, now, drinks }) {
 // ============================================================
 // LEADERBOARD
 // ============================================================
-function Leaderboard({ people, now, accent, stars = [], toggleStar }) {
+function Leaderboard({ people, now, accent, stars = [], toggleStar, chickenIds = [] }) {
   const [sortBy, setSortBy] = useState("drinks");
-  const rows = [...people].map((p) => ({ p, n: drinkCountAtTime(p, now), bac: bacAtTime(p, now) }))
-    .sort((a, b) => sortBy === "bac" ? (b.bac - a.bac || b.n - a.n) : (b.n - a.n || b.bac - a.bac));
+  const rows = [...people].map((p) => ({ p, n: drinkCountAtTime(p, now), bac: bacAtTime(p, now), chicken: chickenIds.includes(p.id) }))
+    .sort((a, b) => {
+      // chickens pinned to top
+      if (a.chicken && !b.chicken) return -1;
+      if (b.chicken && !a.chicken) return 1;
+      return sortBy === "bac" ? (b.bac - a.bac || b.n - a.n) : (b.n - a.n || b.bac - a.bac);
+    });
   const medals = ["🥇", "🥈", "🥉"];
   return (
     <div style={styles.lbWrap}>
@@ -992,11 +1039,11 @@ function Leaderboard({ people, now, accent, stars = [], toggleStar }) {
         const desc = bacDescriptor(r.bac);
         const starred = stars.includes(r.p.id);
         return (
-          <div key={r.p.id} style={{ ...styles.lbRow, ...(i === 0 && r.n > 0 ? { background: "rgba(191,164,106,0.08)" } : {}) }}>
-            <span style={styles.lbRank}>{i < 3 && r.n > 0 ? medals[i] : i + 1}</span>
+          <div key={r.p.id} style={{ ...styles.lbRow, ...(r.chicken ? { background: "rgba(232,160,112,0.12)" } : (i === 0 && r.n > 0 ? { background: "rgba(191,164,106,0.08)" } : {})) }}>
+            <span style={styles.lbRank}>{r.chicken ? "🐔" : (i < 3 && r.n > 0 ? medals[i] : i + 1)}</span>
             <button style={styles.starBtn} onClick={() => toggleStar && toggleStar(r.p.id)} title={starred ? "Unfollow" : "Follow"}>{starred ? "⭐" : "☆"}</button>
             <div style={styles.lbName}>
-              <span>{r.p.name}{r.p.role === "host" && <span style={styles.hostTag}>HOST</span>}</span>
+              <span>{r.p.name}{r.chicken && <span style={styles.chickenTag}>CHICKEN</span>}{r.p.role === "host" && <span style={styles.hostTag}>HOST</span>}</span>
               <span style={{ ...styles.lbDesc, color: desc.tone }}>{desc.word}</span>
             </div>
             <div style={styles.lbRight}>
@@ -2013,6 +2060,151 @@ function PongTable({ cupPositions, standing, ball, splash, stage, marker = 0.5, 
 
 
 // ============================================================
+// CHICKEN CHASE — UI
+// ============================================================
+// Pinned chickens + "I found them" for hunters; chickens get a confirm panel.
+function ChaseBoard({ people, settings, finds, me, now, drinks, actions }) {
+  const chickenIds = settings.chickens || [];
+  const cfs = settings.chickenCountFromStart === true;
+  const amChicken = me && chickenIds.includes(me.id);
+  const myFlock = me?.flock || (amChicken ? me.id : null);
+  const standings = flockStandings(people, settings, now, drinks);
+
+  const myPendingReports = finds.filter((f) => f.finderId === me?.id && f.status === "pending");
+
+  return (
+    <div style={styles.chaseWrap}>
+      <div style={styles.chaseTitle}>🐔 Chicken Chase</div>
+      <div style={styles.chaseSub}>Find the chickens, join their flock, out-drink the others.</div>
+
+      {standings.map((s) => {
+        const chicken = people.find((p) => p.id === s.chickenId);
+        const inThisFlock = myFlock === s.chickenId;
+        const alreadyReported = finds.some((f) => f.finderId === me?.id && f.chickenId === s.chickenId && (f.status === "pending" || f.status === "confirmed"));
+        const canHunt = me && !amChicken && !myFlock && !inThisFlock;
+        return (
+          <div key={s.chickenId} style={{ ...styles.flockCard, ...(inThisFlock ? styles.flockCardMine : {}) }}>
+            <div style={styles.flockHead}>
+              <span style={styles.flockChicken}>🐔 {s.name}{inThisFlock ? " (your flock)" : ""}</span>
+              <span style={styles.flockScore}>{s.score} 🍺</span>
+            </div>
+            <div style={styles.flockMeta}>{s.memberCount === 1 ? "still hiding solo" : `${s.memberCount} in the flock`}</div>
+            {canHunt && (
+              alreadyReported
+                ? <div style={styles.flockReported}>✅ You reported finding them — waiting for {s.name} to confirm</div>
+                : <button style={styles.findBtn} onClick={() => actions.reportFind({ finderId: me.id, finderName: me.name, chickenId: s.chickenId, chickenName: s.name })}>🙌 I found {s.name}!</button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// A chicken's panel to confirm/reject people who say they found them.
+function ChickenConfirmPanel({ finds, me, actions }) {
+  const pending = finds.filter((f) => f.chickenId === me?.id && f.status === "pending");
+  if (pending.length === 0) return null;
+  return (
+    <div style={styles.confirmPanel}>
+      <div style={styles.confirmPanelTitle}>🐔 People who found you</div>
+      {pending.map((f) => (
+        <div key={f.id} style={styles.confirmRow}>
+          <span style={styles.confirmName}>{f.finderName}</span>
+          <div style={styles.confirmBtns}>
+            <button style={styles.confirmYes} onClick={() => actions.confirmFind(f.id, f.finderId, me.id)}>✅ Found me</button>
+            <button style={styles.confirmNo} onClick={() => actions.rejectFind(f.id)}>✕</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Host control to pick the chickens.
+function ChickenAssign({ people, settings, actions, onClose }) {
+  const [picked, setPicked] = useState(settings.chickens || []);
+  const [fromStart, setFromStart] = useState(settings.chickenCountFromStart === true);
+  const toggle = (id) => setPicked((p) => p.includes(id) ? p.filter((x) => x !== id) : (p.length >= 4 ? p : [...p, id]));
+  const save = async () => {
+    const next = { ...settings, chickens: picked, chickenChase: picked.length > 0, chickenCountFromStart: fromStart };
+    await actions.saveSettings(next);
+    onClose();
+  };
+  return (
+    <div style={styles.modalBg} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={{ ...styles.modalTitle, textAlign: "center" }}>🐔 Pick the chickens</div>
+        <p style={styles.confirmText}>Choose 1–4 people to hide. Everyone else hunts them; when found, hunters join that chicken's flock. Most-drinking flock wins.</p>
+        <div style={styles.chickenPickList}>
+          {people.map((p) => (
+            <button key={p.id} style={{ ...styles.chickenPickRow, ...(picked.includes(p.id) ? styles.chickenPickOn : {}) }} onClick={() => toggle(p.id)}>
+              <span>{picked.includes(p.id) ? "🐔" : "○"} {p.name}</span>
+            </button>
+          ))}
+        </div>
+        <div style={styles.settingRow}>
+          <span style={styles.settingLabel}>Count drinks from start of night</span>
+          <button style={{ ...styles.toggleBtn, ...(fromStart ? styles.toggleOn : {}) }} onClick={() => setFromStart((v) => !v)}>{fromStart ? "All night" : "After joining"}</button>
+        </div>
+        <div style={styles.settingHint}>Default counts a hunter's drinks only after they join a flock. "All night" counts everything.</div>
+        <div style={styles.formActions}>
+          <button style={styles.cancelBtn} onClick={onClose}>Cancel</button>
+          <button style={styles.dangerBtn} onClick={save}>{picked.length ? `Start the chase (${picked.length})` : "Turn off chase"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Private per-person bar checklist. Host sets the list (settings.barList = [names]).
+function BarChecklist({ settings, eventId, isHost, actions }) {
+  const bars = settings.barList || [];
+  const LSK = "lastcall_bars_" + eventId;
+  const [hit, setHit] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LSK) || "[]"); } catch { return []; }
+  });
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(bars.join("\n"));
+  const toggle = (b) => {
+    setHit((h) => {
+      const next = h.includes(b) ? h.filter((x) => x !== b) : [...h, b];
+      try { localStorage.setItem(LSK, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const saveList = async () => {
+    const list = text.split("\n").map((s) => s.trim()).filter(Boolean);
+    await actions.saveSettings({ ...settings, barList: list });
+    setEditing(false);
+  };
+  if (bars.length === 0 && !isHost) return null;
+  return (
+    <div style={styles.barWrap}>
+      <div style={styles.barHead}>
+        <span style={styles.barTitle}>🍻 Bar crawl {bars.length > 0 ? `(${hit.length}/${bars.length})` : ""}</span>
+        {isHost && <button style={styles.barEditBtn} onClick={() => { setText((settings.barList || []).join("\n")); setEditing((v) => !v); }}>{editing ? "Cancel" : bars.length ? "Edit" : "Add bars"}</button>}
+      </div>
+      {editing ? (
+        <div>
+          <textarea style={styles.barTextarea} value={text} onChange={(e) => setText(e.target.value)} placeholder={"One bar per line:\nOscar's Tavern\nMcGillin's\nDirty Franks"} rows={6} />
+          <button style={styles.primaryBtn} onClick={saveList}>Save list</button>
+        </div>
+      ) : (
+        <div style={styles.barList}>
+          {bars.length === 0 ? <div style={styles.barEmpty}>No bars yet.</div> : bars.map((b) => (
+            <button key={b} style={{ ...styles.barItem, ...(hit.includes(b) ? styles.barItemHit : {}) }} onClick={() => toggle(b)}>
+              <span>{hit.includes(b) ? "✅" : "⬜"} {b}</span>
+            </button>
+          ))}
+          {bars.length > 0 && <div style={styles.barPrivate}>Only you can see your check-offs.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // SUGGESTION BOX (everyone can submit; developer can read)
 // ============================================================
 function SuggestionBox() {
@@ -2356,6 +2548,14 @@ function buildWrappedSlides(people, eventName, event, endT, drinks) {
       slides.splice(1, 0, { kicker: "WINNING TEAM", big: `${winner.emoji} ${winner.label}`, sub: `${winner.avg.toFixed(1)} per person · ${winner.total} total`, bg: `linear-gradient(160deg, ${winner.color}, #1a2238)` });
       // full standings slide right after it
       slides.splice(2, 0, { kicker: "TEAM STANDINGS", big: "", list: ranked.map((t) => ({ name: `${t.emoji} ${t.label}`, val: `${t.avg.toFixed(1)}/person · ${t.total}` })), bg: "linear-gradient(160deg,#2a3b5a,#15182a)" });
+    }
+  }
+  if ((event?.settings?.chickenChase === true) && (event?.settings?.chickens || []).length > 0) {
+    const fs = flockStandings(people, event.settings, endT, drinks);
+    if (fs.length > 0 && fs[0].score > 0) {
+      const w = fs[0];
+      slides.splice(1, 0, { kicker: "WINNING FLOCK", big: `🐔 ${w.name}`, sub: `${w.score} drinks · ${w.memberCount} in the flock`, bg: "linear-gradient(160deg,#7a4a1a,#15182a)" });
+      slides.splice(2, 0, { kicker: "FLOCK STANDINGS", big: "", list: fs.map((f) => ({ name: `🐔 ${f.name}`, val: `${f.score} drinks · ${f.memberCount}` })), bg: "linear-gradient(160deg,#5a3b2a,#15182a)" });
     }
   }
   return slides;
