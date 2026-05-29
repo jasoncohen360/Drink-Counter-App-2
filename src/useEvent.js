@@ -408,28 +408,22 @@ export function useEvent(eventId) {
     expireFight: async (fightId) => {
       await supabase.from("fights").update({ status: "expired" }).eq("id", fightId).eq("status", "pending");
     },
-    // --- Chicken Chase ---
-    reportFind: async ({ finderId, finderName, chickenId, chickenName }) => {
-      // avoid duplicate pending finds from the same finder for the same chicken
-      const { data: existing } = await supabase.from("finds").select("id")
-        .eq("event_id", eventId).eq("finder_id", finderId).eq("chicken_id", chickenId).eq("status", "pending");
-      if (existing && existing.length) return;
-      await supabase.from("finds").insert({
-        event_id: eventId, finder_id: finderId, finder_name: finderName,
-        chicken_id: chickenId, chicken_name: chickenName, status: "pending",
-      });
-    },
-    confirmFind: async (findId, finderId, chickenId) => {
-      await supabase.from("finds").update({ status: "confirmed" }).eq("id", findId);
-      // finder joins the chicken's flock
-      await supabase.from("people").update({ flock: chickenId, flock_joined_at: new Date().toISOString() }).eq("id", finderId);
-    },
-    rejectFind: async (findId) => {
-      await supabase.from("finds").update({ status: "rejected" }).eq("id", findId);
-    },
-    setChickens: async (chickenIds, settings) => {
-      const next = { ...settings, chickens: chickenIds, chickenChase: true };
+    // --- Chicken Chase (simplified) ---
+    setChickens: async (chickenIds, extra = {}) => {
+      // merge into current settings without clobbering
+      const { data: cur } = await supabase.from("events").select("settings").eq("id", eventId).single();
+      const next = { ...(cur?.settings || {}), chickens: chickenIds, chickenChase: chickenIds.length > 0, ...extra };
       await supabase.from("events").update({ settings: next }).eq("id", eventId);
+    },
+    updateCover: async (file, pos) => {
+      const url = await uploadChatPhoto(eventId, file);
+      const { data: cur } = await supabase.from("events").select("settings").eq("id", eventId).single();
+      const next = { ...(cur?.settings || {}), coverPos: pos ?? 50 };
+      await supabase.from("events").update({ cover_url: url, settings: next }).eq("id", eventId);
+      return url;
+    },
+    removeCover: async () => {
+      await supabase.from("events").update({ cover_url: null }).eq("id", eventId);
     },
     saveSettings: async (settings) => {
       await supabase.from("events").update({ settings }).eq("id", eventId);

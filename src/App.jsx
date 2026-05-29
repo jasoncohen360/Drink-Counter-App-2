@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER, isChicken, flockMembers, flockScore, flockStandings,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER, isChicken, chickenList,
 } from "./engine.js";
 
 // tiny convenience wrappers for team display
@@ -187,7 +187,8 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
   const [err, setErr] = useState("");
   const [coverFile, setCoverFile] = useState(null);
   const [coverPreview, setCoverPreview] = useState(null);
-  const [mode, setMode] = useState("individual"); // individual | teams
+  const [coverPos, setCoverPos] = useState(50);
+  const [mode, setMode] = useState("individual"); // individual | teams | chase
   const [teamCount, setTeamCount] = useState(2);
   const [teams, setTeams] = useState({});
   const coverRef = useRef(null);
@@ -204,7 +205,9 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
     try {
       try { localStorage.setItem(LS_SIZE, size); localStorage.setItem(LS_SEX, sex); } catch (e) {}
       const settings = defaultSettings();
-      if (mode === "teams") { settings.teamCount = teamCount; settings.teams = teams; }
+      if (mode === "teams" || mode === "chase") { settings.teamCount = teamCount; settings.teams = teams; }
+      if (mode === "chase") { settings.chickenChase = true; settings.chickens = []; }
+      if (coverFile) settings.coverPos = coverPos;
       const { eventId, hostPersonId } = await createEvent({
         eventName: evName, hostName: name, size, sex, weightLb: weightFor(size, sex),
         settings, hostPhone: phone, coverFile,
@@ -226,36 +229,45 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
         <input style={styles.inputBig} placeholder="Event name (e.g. Evan & Hillary's Wedding)" value={evName}
           onChange={(e) => setEvName(e.target.value)} autoFocus />
 
-        {/* cover photo (optional, compact) */}
-        <div style={styles.coverRow}>
-          {coverPreview
-            ? <div style={{ ...styles.coverThumb, backgroundImage: `url(${coverPreview})` }} onClick={() => coverRef.current?.click()} />
-            : <button style={styles.coverAddBtn} onClick={() => coverRef.current?.click()}>🖼️</button>}
-          <div style={{ flex: 1 }}>
-            <div style={styles.coverLabel}>Cover photo <span style={styles.optionalTag}>optional</span></div>
-            <div style={styles.coverHint}>{coverPreview ? "Shown as a wide banner — center is kept, top & bottom may crop" : "Wide banner behind the leaderboard. Landscape works best (center stays visible)"}</div>
-          </div>
-          {coverPreview && <button style={styles.coverClear} onClick={() => { setCoverFile(null); setCoverPreview(null); }}>✕</button>}
+        {/* cover photo (optional) — banner-shaped preview + vertical crop */}
+        <div style={styles.coverSection}>
+          <div style={styles.coverLabel}>Cover photo <span style={styles.optionalTag}>optional</span></div>
+          {coverPreview ? (
+            <>
+              <div style={{ ...styles.coverPreviewBanner, backgroundImage: `url(${coverPreview})`, backgroundPosition: `center ${coverPos}%` }}>
+                <div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{evName || "Your event"}</span></div>
+              </div>
+              <div style={styles.coverCropRow}>
+                <span style={styles.coverCropLabel}>Crop ↕</span>
+                <input type="range" min="0" max="100" value={coverPos} onChange={(e) => setCoverPos(Number(e.target.value))} style={{ flex: 1 }} />
+              </div>
+              <div style={styles.coverBtnRow}>
+                <button style={styles.coverSmallBtn} onClick={() => coverRef.current?.click()}>Change</button>
+                <button style={styles.coverSmallBtn} onClick={() => { setCoverFile(null); setCoverPreview(null); }}>Remove</button>
+              </div>
+            </>
+          ) : (
+            <button style={styles.coverAddWide} onClick={() => coverRef.current?.click()}>🖼️ Add a banner photo</button>
+          )}
           <input ref={coverRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onCover} />
         </div>
 
-        {/* individual vs teams */}
+        {/* individual vs teams vs chicken chase */}
         <div style={styles.formRow}>
           <span style={styles.fieldLabel}>Format</span>
           <div style={styles.toggle}>
-            <button style={{ ...styles.toggleBtn, ...(mode === "individual" ? styles.toggleOn : {}) }} onClick={() => setMode("individual")}>Individual</button>
+            <button style={{ ...styles.toggleBtn, ...(mode === "individual" ? styles.toggleOn : {}) }} onClick={() => setMode("individual")}>Solo</button>
             <button style={{ ...styles.toggleBtn, ...(mode === "teams" ? styles.toggleOn : {}) }} onClick={() => setMode("teams")}>Teams</button>
+            <button style={{ ...styles.toggleBtn, ...(mode === "chase" ? styles.toggleOn : {}) }} onClick={() => setMode("chase")}>🐔 Chase</button>
           </div>
         </div>
-        {mode === "teams" && (
+        {(mode === "teams" || mode === "chase") && (
           <div style={styles.teamSetupBox}>
             <div style={styles.teamSetupRow}>
               <span style={styles.fieldLabel}>How many teams?</span>
-              <div style={styles.toggle}>
-                {[2, 3, 4].map((n) => (
-                  <button key={n} style={{ ...styles.toggleBtn, ...(teamCount === n ? styles.toggleOn : {}) }} onClick={() => setTeamCount(n)}>{n}</button>
-                ))}
-              </div>
+              <select style={styles.numSelect} value={teamCount} onChange={(e) => setTeamCount(Number(e.target.value))}>
+                {[2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
             </div>
             {TEAM_DEFS.slice(0, teamCount).map((t) => {
               const cur = teams[t.id] || {};
@@ -270,7 +282,8 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
                 </div>
               );
             })}
-            <div style={styles.coverHint}>Players pick their own team when they join. You can reassign anyone anytime.</div>
+            <div style={styles.coverHint}>Players pick their own team when they join (you can reassign anyone). 2–8 people per team works best.</div>
+            {mode === "chase" && <div style={styles.chaseCreateNote}>🐔 After you start, open the leaderboard or settings to pick which 1–4 people are the chickens.</div>}
           </div>
         )}
 
@@ -448,6 +461,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   const [confirmVomitId, setConfirmVomitId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showChickenAssign, setShowChickenAssign] = useState(false);
+  const [showCoverEdit, setShowCoverEdit] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [chatSeen, setChatSeen] = useState(Date.now());
   const [stars, setStars] = useState(() => {
@@ -674,9 +688,10 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   }, [people, liveNow, drinksMap, legalLimit]);
 
   if (showSettings) {
-    return <SettingsScreen settings={settings} amHost={amHost}
+    return <SettingsScreen settings={settings} amHost={amHost} coverUrl={ev.event?.cover_url}
       onSave={(s) => { actions.saveSettings(s); setShowSettings(false); }}
       onSetupChase={() => { setShowSettings(false); setShowChickenAssign(true); }}
+      onEditCover={() => { setShowSettings(false); setShowCoverEdit(true); }}
       onCancel={() => setShowSettings(false)} />;
   }
 
@@ -725,9 +740,11 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
           onClose={() => setActiveFight(null)} />
       )}
 
-      {showChickenAssign && <ChickenAssign people={people} settings={settings} actions={actions} onClose={() => setShowChickenAssign(false)} />}
-
-      {amChicken && <ChickenConfirmPanel finds={finds} me={me} actions={actions} />}
+      {showChickenAssign && <ChickenAssign people={people} settings={settings} onSaveChickens={(ids) => actions.setChickens(ids)} onClose={() => setShowChickenAssign(false)} />}
+      {showCoverEdit && <CoverEditor eventName={eventName} currentUrl={ev.event?.cover_url} currentPos={settings.coverPos ?? 50}
+        onSave={async (file, pos) => { if (file) { await actions.updateCover(file, pos); } else { await actions.saveSettings({ ...settings, coverPos: pos }); } setShowCoverEdit(false); }}
+        onRemove={async () => { await actions.removeCover(); setShowCoverEdit(false); }}
+        onClose={() => setShowCoverEdit(false)} />}
 
       {banner && (
         <div style={{ ...styles.banner, ...(banner.big ? styles.bannerBig : {}) }}
@@ -772,9 +789,9 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       {/* ---- LEADERBOARD TAB ---- */}
       {tab === "leaderboard" && (
         <>
-          {ev.event?.cover_url && <div style={{ ...styles.coverBanner, backgroundImage: `url(${ev.event.cover_url})` }}><div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{eventName}</span></div></div>}
+          {ev.event?.cover_url && <div style={{ ...styles.coverBanner, backgroundImage: `url(${ev.event.cover_url})`, backgroundPosition: `center ${settings.coverPos ?? 50}%` }}><div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{eventName}</span></div></div>}
           {amHost && <button style={styles.chaseSetupBtn} onClick={() => setShowChickenAssign(true)}>🐔 {chaseOn ? "Manage Chicken Chase" : "Start a Chicken Chase"}</button>}
-          {chaseOn && <ChaseBoard people={people} settings={settings} finds={finds} me={me} now={liveNow} drinks={drinksMap} actions={actions} />}
+          {chaseOn && <ChaseBoard people={people} settings={settings} eventId={ev.event?.id} me={me} now={liveNow} drinks={drinksMap} actions={actions} isHost={amHost} />}
           {chaseOn && <BarChecklist settings={settings} eventId={ev.event?.id} isHost={amHost} actions={actions} />}
           {partyDrinks > 0 ? (
             <>
@@ -2064,79 +2081,93 @@ function PongTable({ cupPositions, standing, ball, splash, stage, marker = 0.5, 
 // CHICKEN CHASE — UI
 // ============================================================
 // Pinned chickens + "I found them" for hunters; chickens get a confirm panel.
-function ChaseBoard({ people, settings, finds, me, now, drinks, actions }) {
-  const chickenIds = settings.chickens || [];
-  const cfs = settings.chickenCountFromStart === true;
-  const amChicken = me && chickenIds.includes(me.id);
-  const myFlock = me?.flock || (amChicken ? me.id : null);
-  const standings = flockStandings(people, settings, now, drinks);
-
-  const myPendingReports = finds.filter((f) => f.finderId === me?.id && f.status === "pending");
-
+function ChaseBoard({ people, settings, eventId, me, now, drinks, actions, isHost }) {
+  const chickens = chickenList(people, settings);
+  // private "found" checklist, stored per-device (naturally private to you/your team)
+  const LSK = "lastcall_found_" + eventId;
+  const [found, setFound] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LSK) || "[]"); } catch { return []; }
+  });
+  const amChicken = me && (settings.chickens || []).includes(me.id);
+  const toggleFound = (cid) => setFound((f) => {
+    const next = f.includes(cid) ? f.filter((x) => x !== cid) : [...f, cid];
+    try { localStorage.setItem(LSK, JSON.stringify(next)); } catch {}
+    return next;
+  });
   return (
     <div style={styles.chaseWrap}>
       <div style={styles.chaseTitle}>🐔 Chicken Chase</div>
-      <div style={styles.chaseSub}>Find the chickens, join their flock, out-drink the others.</div>
-
-      {standings.map((s) => {
-        const chicken = people.find((p) => p.id === s.chickenId);
-        const inThisFlock = myFlock === s.chickenId;
-        const alreadyReported = finds.some((f) => f.finderId === me?.id && f.chickenId === s.chickenId && (f.status === "pending" || f.status === "confirmed"));
-        const canHunt = me && !amChicken && !myFlock && !inThisFlock;
+      <div style={styles.chaseSub}>{amChicken ? "You're a chicken — stay hidden and keep drinking. Your drinks are on the board for all to see." : "Hunt the chickens. Check them off as you find them — only you see your finds."}</div>
+      {chickens.map((c) => {
+        const n = drinkCountAtTime(c, now);
+        const haveFound = found.includes(c.id);
         return (
-          <div key={s.chickenId} style={{ ...styles.flockCard, ...(inThisFlock ? styles.flockCardMine : {}) }}>
+          <div key={c.id} style={{ ...styles.flockCard, ...(haveFound ? styles.flockCardMine : {}) }}>
             <div style={styles.flockHead}>
-              <span style={styles.flockChicken}>🐔 {s.name}{inThisFlock ? " (your flock)" : ""}</span>
-              <span style={styles.flockScore}>{s.score} 🍺</span>
+              <span style={styles.flockChicken}>🐔 {c.name}</span>
+              <span style={styles.flockScore}>{n} 🍺</span>
             </div>
-            <div style={styles.flockMeta}>{s.memberCount === 1 ? "still hiding solo" : `${s.memberCount} in the flock`}</div>
-            {canHunt && (
-              alreadyReported
-                ? <div style={styles.flockReported}>✅ You reported finding them — waiting for {s.name} to confirm</div>
-                : <button style={styles.findBtn} onClick={() => actions.reportFind({ finderId: me.id, finderName: me.name, chickenId: s.chickenId, chickenName: s.name })}>🙌 I found {s.name}!</button>
+            {!amChicken && me && (
+              <button style={{ ...styles.findBtn, ...(haveFound ? styles.findBtnDone : {}) }} onClick={() => toggleFound(c.id)}>
+                {haveFound ? "✅ Found — tap to undo" : "🔍 Mark as found"}
+              </button>
             )}
           </div>
         );
       })}
+      <div style={styles.barPrivate}>Your finds are private to you. {(settings.teamCount || 0) > 0 ? "Coordinate with your team in person." : ""}</div>
     </div>
   );
 }
 
-// A chicken's panel to confirm/reject people who say they found them.
-function ChickenConfirmPanel({ finds, me, actions }) {
-  const pending = finds.filter((f) => f.chickenId === me?.id && f.status === "pending");
-  if (pending.length === 0) return null;
+// Host cover-photo editor (used from settings).
+function CoverEditor({ eventName, currentUrl, currentPos = 50, onSave, onRemove, onClose }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(currentUrl || null);
+  const [pos, setPos] = useState(currentPos);
+  const ref = useRef(null);
+  const pick = (e) => { const f = e.target.files?.[0]; if (!f) return; setFile(f); setPreview(URL.createObjectURL(f)); };
   return (
-    <div style={styles.confirmPanel}>
-      <div style={styles.confirmPanelTitle}>🐔 People who found you</div>
-      {pending.map((f) => (
-        <div key={f.id} style={styles.confirmRow}>
-          <span style={styles.confirmName}>{f.finderName}</span>
-          <div style={styles.confirmBtns}>
-            <button style={styles.confirmYes} onClick={() => actions.confirmFind(f.id, f.finderId, me.id)}>✅ Found me</button>
-            <button style={styles.confirmNo} onClick={() => actions.rejectFind(f.id)}>✕</button>
-          </div>
+    <div style={styles.modalBg} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={{ ...styles.modalTitle, textAlign: "center" }}>🖼️ Cover photo</div>
+        {preview ? (
+          <>
+            <div style={{ ...styles.coverPreviewBanner, backgroundImage: `url(${preview})`, backgroundPosition: `center ${pos}%` }}>
+              <div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{eventName}</span></div>
+            </div>
+            <div style={styles.coverCropRow}>
+              <span style={styles.coverCropLabel}>Crop ↕</span>
+              <input type="range" min="0" max="100" value={pos} onChange={(e) => setPos(Number(e.target.value))} style={{ flex: 1 }} />
+            </div>
+            <div style={styles.coverBtnRow}>
+              <button style={styles.coverSmallBtn} onClick={() => ref.current?.click()}>Change</button>
+              <button style={styles.coverSmallBtn} onClick={onRemove}>Remove</button>
+            </div>
+          </>
+        ) : (
+          <button style={styles.coverAddWide} onClick={() => ref.current?.click()}>🖼️ Add a banner photo</button>
+        )}
+        <input ref={ref} type="file" accept="image/*" style={{ display: "none" }} onChange={pick} />
+        <div style={styles.formActions}>
+          <button style={styles.cancelBtn} onClick={onClose}>Cancel</button>
+          <button style={styles.primaryBtn} onClick={() => onSave(file, pos)}>Save</button>
         </div>
-      ))}
+      </div>
     </div>
   );
 }
 
-// Host control to pick the chickens.
-function ChickenAssign({ people, settings, actions, onClose }) {
+// Host control to pick the chickens (used from create flow + settings).
+function ChickenAssign({ people, settings, onSaveChickens, onClose }) {
   const [picked, setPicked] = useState(settings.chickens || []);
-  const [fromStart, setFromStart] = useState(settings.chickenCountFromStart === true);
   const toggle = (id) => setPicked((p) => p.includes(id) ? p.filter((x) => x !== id) : (p.length >= 4 ? p : [...p, id]));
-  const save = async () => {
-    const next = { ...settings, chickens: picked, chickenChase: picked.length > 0, chickenCountFromStart: fromStart };
-    await actions.saveSettings(next);
-    onClose();
-  };
+  const save = async () => { await onSaveChickens(picked); onClose(); };
   return (
     <div style={styles.modalBg} onClick={onClose}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={{ ...styles.modalTitle, textAlign: "center" }}>🐔 Pick the chickens</div>
-        <p style={styles.confirmText}>Choose 1–4 people to hide. Everyone else hunts them; when found, hunters join that chicken's flock. Most-drinking flock wins.</p>
+        <p style={styles.confirmText}>Choose 1–4 people to hide. Everyone else hunts them. Drinking still tracks normally — chickens' drinks show on the board for all to see; who's found whom stays private.</p>
         <div style={styles.chickenPickList}>
           {people.map((p) => (
             <button key={p.id} style={{ ...styles.chickenPickRow, ...(picked.includes(p.id) ? styles.chickenPickOn : {}) }} onClick={() => toggle(p.id)}>
@@ -2144,14 +2175,9 @@ function ChickenAssign({ people, settings, actions, onClose }) {
             </button>
           ))}
         </div>
-        <div style={styles.settingRow}>
-          <span style={styles.settingLabel}>Count drinks from start of night</span>
-          <button style={{ ...styles.toggleBtn, ...(fromStart ? styles.toggleOn : {}) }} onClick={() => setFromStart((v) => !v)}>{fromStart ? "All night" : "After joining"}</button>
-        </div>
-        <div style={styles.settingHint}>Default counts a hunter's drinks only after they join a flock. "All night" counts everything.</div>
         <div style={styles.formActions}>
           <button style={styles.cancelBtn} onClick={onClose}>Cancel</button>
-          <button style={styles.dangerBtn} onClick={save}>{picked.length ? `Start the chase (${picked.length})` : "Turn off chase"}</button>
+          <button style={styles.dangerBtn} onClick={save}>{picked.length ? `Save chickens (${picked.length})` : "Turn off chase"}</button>
         </div>
       </div>
     </div>
@@ -2260,7 +2286,7 @@ function SuggestionBox() {
 // ============================================================
 // SETTINGS
 // ============================================================
-function SettingsScreen({ settings, amHost, onSave, onSetupChase, onCancel }) {
+function SettingsScreen({ settings, amHost, coverUrl, onSave, onSetupChase, onEditCover, onCancel }) {
   const init = settings && settings.legalLimit != null ? settings : defaultSettings();
   const [stateCode, setStateCode] = useState(init.state || "NJ");
   const [limit, setLimit] = useState(init.legalLimit ?? 0.08);
@@ -2427,6 +2453,11 @@ function SettingsScreen({ settings, amHost, onSave, onSetupChase, onCancel }) {
             <button style={styles.settingGoBtn} onClick={() => onSetupChase && onSetupChase()}>{(settings.chickens || []).length > 0 ? "Manage" : "Set up"}</button>
           </div>
           <div style={styles.settingHint}>Opens the chicken picker. You can also start it from the 🏆 leaderboard tab.</div>
+          <div style={{ ...styles.settingRow, marginTop: 10 }}>
+            <span style={styles.settingLabel}>🖼️ Cover photo</span>
+            <button style={styles.settingGoBtn} onClick={() => onEditCover && onEditCover()}>{coverUrl ? "Change" : "Add"}</button>
+          </div>
+          <div style={styles.settingHint}>A banner shown behind the leaderboard.</div>
         </div>
       )}
 
@@ -2557,11 +2588,12 @@ function buildWrappedSlides(people, eventName, event, endT, drinks) {
     }
   }
   if ((event?.settings?.chickenChase === true) && (event?.settings?.chickens || []).length > 0) {
-    const fs = flockStandings(people, event.settings, endT, drinks);
-    if (fs.length > 0 && fs[0].score > 0) {
-      const w = fs[0];
-      slides.splice(1, 0, { kicker: "WINNING FLOCK", big: `🐔 ${w.name}`, sub: `${w.score} drinks · ${w.memberCount} in the flock`, bg: "linear-gradient(160deg,#7a4a1a,#15182a)" });
-      slides.splice(2, 0, { kicker: "FLOCK STANDINGS", big: "", list: fs.map((f) => ({ name: `🐔 ${f.name}`, val: `${f.score} drinks · ${f.memberCount}` })), bg: "linear-gradient(160deg,#5a3b2a,#15182a)" });
+    const chs = (event.settings.chickens || []).map((id) => people.find((p) => p.id === id)).filter(Boolean)
+      .map((c) => ({ name: c.name, n: drinkCountAtTime(c, endT) })).sort((a, b) => b.n - a.n);
+    if (chs.length > 0) {
+      const top = chs[0];
+      slides.splice(1, 0, { kicker: "TOP CHICKEN", big: `🐔 ${top.name}`, sub: `${top.n} drink${top.n === 1 ? "" : "s"} while on the run`, bg: "linear-gradient(160deg,#7a4a1a,#15182a)" });
+      if (chs.length > 1) slides.splice(2, 0, { kicker: "THE CHICKENS", big: "", list: chs.map((c) => ({ name: `🐔 ${c.name}`, val: `${c.n} drinks` })), bg: "linear-gradient(160deg,#5a3b2a,#15182a)" });
     }
   }
   return slides;
