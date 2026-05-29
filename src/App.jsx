@@ -1594,17 +1594,6 @@ function PongChallengeComposer({ me, target, onSend, onCancel }) {
   );
 }
 
-// Cups your opponent has to clear = scales with YOUR drinks (your disadvantage)
-function cupCountFor(person, now, drinks) {
-  const n = drinkCountAtTime(person, now);
-  return Math.max(3, Math.min(10, 3 + Math.floor(n / 2)));
-}
-// Throws YOU get = scales with YOUR drinks (your advantage)
-function throwsFor(person, now, drinks) {
-  const n = drinkCountAtTime(person, now);
-  return Math.max(3, Math.min(10, 3 + Math.floor(n / 2)));
-}
-
 function PongOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) {
   const amChallenger = fight.challengerId === me.id;
   const amOpponent = fight.opponentId === me.id;
@@ -1658,124 +1647,143 @@ function PongOverlay({ fight, me, people, drinks, liveNow, actions, onClose }) {
     actions={actions} onClose={onClose} />;
 }
 
-// ---- the actual game ----
-// Phase 1 focus: the THROW must feel good. Flick-and-release on an angled table.
+// ---- the actual game: two-stage TIMING throw (aim sweep → power sweep) ----
+const PONG_CUPS = 10;
+const PONG_SHOTS = 10;
+
 function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveNow, actions, onClose }) {
-  // Dual handicap: your drinks tonight = MORE THROWS for you (advantage)
-  //                                    + MORE CUPS for opponent to aim at (disadvantage)
-  // So when I play, I'm shooting at MY OPPONENT's cup-count (their drinks),
-  // and I get throws based on MY own drinks.
   const myTargetPerson = amChallenger ? opponent : challenger;
-  const myselfPerson   = amChallenger ? challenger : opponent;
-  const totalCups = cupCountFor(myTargetPerson, liveNow, drinks);
-  const SHOTS = throwsFor(myselfPerson, liveNow, drinks);
+  const [stage, setStage] = useState("howto"); // howto | aim | power | flying | submitted
   const [made, setMade] = useState(0);
   const [shotsUsed, setShotsUsed] = useState(0);
-  const [phase, setPhase] = useState("playing"); // playing | submitted
-  const [ball, setBall] = useState(null);
-  const [aim, setAim] = useState(null);
+  const [standing, setStanding] = useState(() => Array.from({ length: PONG_CUPS }, (_, i) => i));
+  const [lockedAim, setLockedAim] = useState(0.5);   // 0..1 across
+  const [marker, setMarker] = useState(0.5);          // live sweeping marker 0..1
+  const [ball, setBall] = useState(null);             // {x, depth, made}
   const [splash, setSplash] = useState(null);
-  const areaRef = useRef(null);
-  const dragStart = useRef(null);
+  const [lastResult, setLastResult] = useState(null); // "splash!" | "miss"
   const submittedRef = useRef(false);
+  const rafRef = useRef(null);
+  const dirRef = useRef(1);
+  const markerRef = useRef(0.5);
 
-  // cup layout (triangle), recomputed when count changes; which are still standing
-  const [standing, setStanding] = useState(() => Array.from({ length: totalCups }, (_, i) => i));
+  const cupPositions = pyramidPositions(PONG_CUPS);
+  const ys = cupPositions.map((p) => p.y);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
 
-  const cupPositions = pyramidPositions(totalCups);
+  // sweep animation for aim (horizontal) and power (depth)
+  useEffect(() => {
+    if (stage !== "aim" && stage !== "power") return;
+    const speed = stage === "aim" ? 0.018 : 0.022; // power sweeps a touch faster
+    let raf;
+    const tick = () => {
+      let m = markerRef.current + dirRef.current * speed;
+      if (m >= 1) { m = 1; dirRef.current = -1; }
+      if (m <= 0) { m = 0; dirRef.current = 1; }
+      markerRef.current = m;
+      setMarker(m);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    rafRef.current = raf;
+    return () => cancelAnimationFrame(raf);
+  }, [stage]);
 
-  const onDown = (e) => {
-    if (phase !== "playing" || ball) return;
-    if (e.preventDefault) e.preventDefault();
-    const pt = pointFrom(e);
-    dragStart.current = pt;
-  };
-  const onMove = (e) => {
-    if (!dragStart.current || ball) return;
-    if (e.preventDefault) e.preventDefault();
-    const pt = pointFrom(e);
-    const dx = pt.x - dragStart.current.x;
-    const dy = pt.y - dragStart.current.y;
-    // Drag UP (negative dy) sends ball forward. We map ANY upward drag to a throw,
-    // with the smallest meaningful flick landing at the FRONT of the table and
-    // a big flick reaching the back. Horizontal drag aims left/right.
-    const upPx = Math.max(0, -dy);
-    // very small dy still counts — front cups should be reachable
-    const power = Math.min(1, upPx / 180);
-    const angle = Math.max(-1, Math.min(1, dx / 140));
-    setAim({ power, angle, upPx });
-  };
-  const onUp = (e) => {
-    if (!dragStart.current || ball) { dragStart.current = null; return; }
-    const a = aim;
-    dragStart.current = null;
-    setAim(null);
-    // tiny threshold so even a small flick throws (so front cups are reachable)
-    if (!a || a.upPx < 8) return;
-    throwBall(a);
+  const startThrow = () => {
+    markerRef.current = 0.5; dirRef.current = 1; setMarker(0.5);
+    setStage("aim");
   };
 
-  const throwBall = (a) => {
-    // horizontal landing: full table width
-    const landX = 50 + a.angle * 45; // -45..+45 from center, percent across
-    // depth: tiny flick lands at front row, full flick lands at back row
-    // map power 0..1 → depth 0..1 covering the cup pyramid + a bit beyond
-    const landDepth = a.power;
-    setBall({ a, landX, landDepth });
+  const lockTap = () => {
+    if (stage === "aim") {
+      setLockedAim(markerRef.current);
+      // restart sweep for power
+      markerRef.current = 0; dirRef.current = 1; setMarker(0);
+      setStage("power");
+    } else if (stage === "power") {
+      const power = markerRef.current;
+      fireBall(lockedAim, power);
+    }
+  };
+
+  const fireBall = (aimX, power) => {
+    cancelAnimationFrame(rafRef.current);
+    setStage("flying");
+    const landX = 8 + aimX * 84;             // percent across (8..92)
+    const landDepth = power;                  // 0..1 front..back
+    const targetY = yMin + landDepth * (yMax - yMin);
+    // hit detection
+    let hitIdx = null, bestDist = 999;
+    standing.forEach((idx) => {
+      const p = cupPositions[idx]; if (!p) return;
+      const d = Math.hypot(p.x - landX, (p.y - targetY) * 1.0);
+      if (d < bestDist) { bestDist = d; hitIdx = idx; }
+    });
+    const isHit = bestDist < 7;
+    setBall({ x: landX, depth: landDepth, made: isHit });
     setTimeout(() => {
-      const hitIdx = detectHit(landX, landDepth, cupPositions, standing);
-      if (hitIdx != null) {
+      if (isHit && hitIdx != null) {
         setStanding((s) => s.filter((i) => i !== hitIdx));
         setMade((m) => m + 1);
         setSplash(hitIdx);
-        setTimeout(() => setSplash(null), 500);
+        setLastResult("splash");
+        setTimeout(() => setSplash(null), 600);
+      } else {
+        setLastResult("miss");
       }
-      setShotsUsed((u) => u + 1);
+      const used = shotsUsed + 1;
+      setShotsUsed(used);
       setBall(null);
-    }, 600);
+      setTimeout(() => {
+        setLastResult(null);
+        if (used >= PONG_SHOTS || standing.length - (isHit ? 1 : 0) <= 0) {
+          finishTurn(made + (isHit ? 1 : 0));
+        } else {
+          markerRef.current = 0.5; dirRef.current = 1; setMarker(0.5);
+          setStage("aim");
+        }
+      }, 700);
+    }, 650);
   };
 
-  // when shots run out, submit my made-count
-  useEffect(() => {
-    if (shotsUsed >= SHOTS && !submittedRef.current) {
-      submittedRef.current = true;
-      setPhase("submitted");
-      const side = amChallenger ? "challenger" : "opponent";
-      actions.submitFightTaps(fight.id, side, made).catch(() => {});
-    }
-  }, [shotsUsed, SHOTS, made, amChallenger, fight.id]);
+  const finishTurn = (finalMade) => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
+    setStage("submitted");
+    const side = amChallenger ? "challenger" : "opponent";
+    actions.submitFightTaps(fight.id, side, finalMade).catch(() => {});
+  };
 
-  // finalize when both have submitted (challenger does it)
+  // finalize when both submitted (challenger writes the result)
   useEffect(() => {
     if (fight.challengerTaps == null || fight.opponentTaps == null) return;
     if (fight.status === "done") return;
     if (me.id !== fight.challengerId) return;
     const cMade = fight.challengerTaps, oMade = fight.opponentTaps;
-    // higher made count wins; tie broken by fewer cups needed (underdog bonus already in cup count)
     let winnerId = null;
     if (cMade > oMade) winnerId = fight.challengerId;
     else if (oMade > cMade) winnerId = fight.opponentId;
     actions.finalizeFight(fight.id, { winnerId, challengerMade: cMade, opponentMade: oMade }).catch(() => {});
   }, [fight.challengerTaps, fight.opponentTaps, fight.status, me]);
 
-  // RESULT
+  // RESULT screen
   if (fight.status === "done" && fight.result) {
     const r = fight.result;
     const amWinner = r.winnerId === me.id;
     const isTie = !r.winnerId;
     return (
       <div style={styles.pongCenter}>
-        <div style={styles.pongGlyph}>{isTie ? "🤝" : amWinner ? "🏆" : "💀"}</div>
-        <div style={styles.fightHead}>{isTie ? "Tie game!" : amWinner ? "You won!" : `${(me.id === challenger.id ? opponent : challenger).name} won`}</div>
+        <div style={{ ...styles.pongGlyph, animation: "flashPop 0.6s ease" }}>{isTie ? "🤝" : amWinner ? "🏆" : "💀"}</div>
+        <div style={styles.fightHead}>{isTie ? "Tie game!" : amWinner ? "You won! 🎉" : `${(me.id === challenger.id ? opponent : challenger).name} won`}</div>
         <div style={styles.fightScoreRow}>
           <div style={styles.fightScoreSide}>
             <div style={styles.fightScoreName}>{challenger.name}</div>
-            <div style={styles.fightScoreTaps}>{r.challengerMade} cups</div>
+            <div style={styles.fightScoreTaps}>{r.challengerMade}/10</div>
           </div>
           <div style={styles.fightVs}>vs</div>
           <div style={styles.fightScoreSide}>
             <div style={styles.fightScoreName}>{opponent.name}</div>
-            <div style={styles.fightScoreTaps}>{r.opponentMade} cups</div>
+            <div style={styles.fightScoreTaps}>{r.opponentMade}/10</div>
           </div>
         </div>
         <button style={styles.fightAccept} onClick={onClose}>Done</button>
@@ -1783,30 +1791,52 @@ function PongGame({ fight, me, amChallenger, challenger, opponent, drinks, liveN
     );
   }
 
-  if (phase === "submitted") {
+  if (stage === "submitted") {
     return (
       <div style={styles.pongCenter}>
         <div style={styles.pongGlyph}>⏱️</div>
-        <div style={styles.fightHead}>You sank {made} of {totalCups}</div>
-        <div style={styles.fightSub}>Waiting for the other side…</div>
+        <div style={styles.fightHead}>You sank {made}/10</div>
+        <div style={styles.fightSub}>Waiting for {myTargetPerson?.name}…</div>
       </div>
     );
   }
 
-  // PLAYING — the table
+  // HOW TO PLAY intro
+  if (stage === "howto") {
+    return (
+      <div style={styles.pongCenter}>
+        <div style={styles.pongGlyph}>🏓</div>
+        <div style={styles.fightHead}>Beer Pong</div>
+        <div style={styles.howtoBox}>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>1</span><span>Tap once to lock your <b>aim</b> — a marker sweeps left & right. Tap when it's lined up with a cup.</span></div>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>2</span><span>Tap again to lock your <b>power</b> — a bar sweeps near→far. Low = front cups, high = back cups.</span></div>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>3</span><span>Ball throws to that spot. Sink as many as you can — <b>10 shots, 10 cups.</b></span></div>
+          <div style={styles.howtoRow}><span style={styles.howtoStep}>🏆</span><span>Most cups sunk wins. Good luck.</span></div>
+        </div>
+        <button style={styles.fightAccept} onClick={startThrow}>Let's play 🏓</button>
+      </div>
+    );
+  }
+
+  // PLAYING — the table with sweeping marker
   return (
-    <div style={styles.pongOverlay}>
+    <div style={styles.pongOverlay} onClick={lockTap}>
       <div style={styles.pongHud}>
-        <span>🎯 vs {myTargetPerson?.name}</span>
-        <span>Cups: {standing.length} left</span>
-        <span>Shots: {SHOTS - shotsUsed}</span>
+        <span>🎯 {myTargetPerson?.name}'s cups</span>
+        <span>🥤 {standing.length} left</span>
+        <span>🏀 {PONG_SHOTS - shotsUsed} shots</span>
       </div>
-      <div style={styles.pongTableWrap} ref={areaRef}
-        onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
-        onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
-        <PongTable cupPositions={cupPositions} standing={standing} ball={ball} aim={aim} splash={splash} />
+      <div style={styles.pongTableWrap}>
+        <PongTable cupPositions={cupPositions} standing={standing} ball={ball} splash={splash}
+          stage={stage} marker={marker} lockedAim={lockedAim} yMin={yMin} yMax={yMax} />
       </div>
-      <div style={styles.pongHint}>{ball ? "…" : aim ? "release!" : "drag up + sideways to aim, release to throw"}</div>
+      <div style={styles.pongBottom}>
+        {lastResult === "splash" && <div style={styles.pongSplashTxt}>SPLASH! 💦</div>}
+        {lastResult === "miss" && <div style={styles.pongMissTxt}>miss…</div>}
+        {!lastResult && stage === "aim" && <div style={styles.pongHint}>👆 tap to lock <b>AIM</b> (left ↔ right)</div>}
+        {!lastResult && stage === "power" && <div style={styles.pongHint}>👆 tap to lock <b>POWER</b> (near ↔ far)</div>}
+        {!lastResult && stage === "flying" && <div style={styles.pongHint}>🤞</div>}
+      </div>
     </div>
   );
 }
@@ -1828,59 +1858,42 @@ function pyramidPositions(n) {
   return positions;
 }
 
-function detectHit(landX, landDepth, positions, standing) {
-  // figure out the cup pyramid's y range so power 0..1 maps across exactly the cups
-  if (!positions.length) return null;
-  const ys = positions.map((p) => p.y);
-  const yMin = Math.min(...ys), yMax = Math.max(...ys);
-  const targetY = yMin + landDepth * (yMax - yMin || 1);
-  let best = null, bestDist = 999;
-  standing.forEach((idx) => {
-    const p = positions[idx]; if (!p) return;
-    const dist = Math.hypot(p.x - landX, (p.y - targetY) * 1.0);
-    if (dist < bestDist) { bestDist = dist; best = idx; }
-  });
-  return bestDist < 7 ? best : null; // within tolerance = made it
-}
-
-function pointFrom(e) {
-  if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  if (e.changedTouches && e.changedTouches[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
-  return { x: e.clientX, y: e.clientY };
-}
-
 // the visual table — angled perspective via CSS transform, SVG cups + ball
-function PongTable({ cupPositions, standing, ball, aim, splash }) {
-  // compute the y-range of the cup pyramid so we can map landing depth visually
-  const ys = cupPositions.map((p) => p.y);
-  const yMin = ys.length ? Math.min(...ys) : 18;
-  const yMax = ys.length ? Math.max(...ys) : 60;
-  const aimLandX = aim ? 50 + aim.angle * 45 : 50;
-  const aimLandY = aim ? yMin + aim.power * (yMax - yMin) : yMin;
+function PongTable({ cupPositions, standing, ball, splash, stage, marker = 0.5, lockedAim = 0.5, yMin = 18, yMax = 60 }) {
+  // marker position: during aim it sweeps X; during power it sweeps depth (Y)
+  const aimX = stage === "aim" ? 8 + marker * 84 : 8 + lockedAim * 84;
+  const powerDepth = stage === "power" ? marker : 0;
   return (
     <div style={styles.pongPerspective}>
       <div style={styles.pongTable}>
-        {cupPositions.map((p, idx) => {
+        {/* table center line + far edge for depth cues */}
+        <div style={styles.pongTableLine} />
+        {/* cups (sorted so back cups render first, front overlap them) */}
+        {cupPositions.map((p, idx) => ({ p, idx })).sort((a, b) => a.p.y - b.p.y).map(({ p, idx }) => {
           if (!standing.includes(idx)) return null;
+          // cups further back are slightly smaller for depth
+          const scale = 0.78 + (p.y - yMin) / (yMax - yMin || 1) * 0.32;
           return (
-            <div key={idx} style={{ ...styles.pongCup, left: `${p.x}%`, top: `${p.y}%` }}>
-              <div style={styles.pongCupRim} />
+            <div key={idx} style={{ ...styles.pongCup, left: `${p.x}%`, top: `${p.y}%`, transform: `translate(-50%,-50%) scale(${scale})` }}>
               <div style={styles.pongCupBody} />
+              <div style={styles.pongCupRim} />
               {splash === idx && <div style={styles.pongSplash}>💦</div>}
             </div>
           );
         })}
-        {/* landing reticle — shows exactly where the ball will land as you drag */}
-        {aim && !ball && (
-          <div style={{ ...styles.pongReticle, left: `${aimLandX}%`, top: `${aimLandY}%` }}>
-            <div style={styles.pongReticleRing} />
-          </div>
+        {/* AIM guide: vertical line sweeping left-right */}
+        {(stage === "aim" || stage === "power") && (
+          <div style={{ ...styles.pongAimLine, left: `${aimX}%`, opacity: stage === "aim" ? 1 : 0.5 }} />
         )}
-        {/* ball + shadow */}
+        {/* POWER guide: a dot travelling up the aim line showing depth */}
+        {stage === "power" && (
+          <div style={{ ...styles.pongPowerDot, left: `${aimX}%`, top: `${yMin + powerDepth * (yMax - yMin)}%` }} />
+        )}
+        {/* ball + shadow (arcs from bottom to landing spot) */}
         {ball && (
           <>
-            <div style={{ ...styles.pongBallShadow, left: `${ball.landX}%`, top: `${yMin + ball.landDepth * (yMax - yMin)}%` }} />
-            <div style={{ ...styles.pongBall, left: `${ball.landX}%`, animation: "pongThrow 0.6s ease-out forwards" }} />
+            <div style={{ ...styles.pongBallShadow, left: `${ball.x}%`, top: `${yMin + ball.depth * (yMax - yMin)}%` }} />
+            <div style={{ ...styles.pongBall, left: `${ball.x}%`, ['--land-top']: `${yMin + ball.depth * (yMax - yMin)}%`, animation: "pongArc 0.65s ease-out forwards" }} />
           </>
         )}
       </div>
