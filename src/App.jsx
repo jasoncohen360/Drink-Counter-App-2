@@ -185,14 +185,29 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
   const [sex, setSex] = useState(() => localStorage.getItem(LS_SEX) || "male");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [coverFile, setCoverFile] = useState(null);
+  const [coverPreview, setCoverPreview] = useState(null);
+  const [mode, setMode] = useState("individual"); // individual | teams
+  const [teamCount, setTeamCount] = useState(2);
+  const [teams, setTeams] = useState({});
+  const coverRef = useRef(null);
+
+  const onCover = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setCoverFile(f);
+    setCoverPreview(URL.createObjectURL(f));
+  };
 
   const go = async () => {
     setBusy(true); setErr("");
     try {
       try { localStorage.setItem(LS_SIZE, size); localStorage.setItem(LS_SEX, sex); } catch (e) {}
+      const settings = defaultSettings();
+      if (mode === "teams") { settings.teamCount = teamCount; settings.teams = teams; }
       const { eventId, hostPersonId } = await createEvent({
         eventName: evName, hostName: name, size, sex, weightLb: weightFor(size, sex),
-        settings: defaultSettings(), hostPhone: phone,
+        settings, hostPhone: phone, coverFile,
       });
       onCreated(eventId, hostPersonId);
     } catch (e) {
@@ -210,6 +225,55 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
         <h1 style={styles.bigTitle}>New event</h1>
         <input style={styles.inputBig} placeholder="Event name (e.g. Evan & Hillary's Wedding)" value={evName}
           onChange={(e) => setEvName(e.target.value)} autoFocus />
+
+        {/* cover photo (optional, compact) */}
+        <div style={styles.coverRow}>
+          {coverPreview
+            ? <div style={{ ...styles.coverThumb, backgroundImage: `url(${coverPreview})` }} onClick={() => coverRef.current?.click()} />
+            : <button style={styles.coverAddBtn} onClick={() => coverRef.current?.click()}>🖼️</button>}
+          <div style={{ flex: 1 }}>
+            <div style={styles.coverLabel}>Cover photo <span style={styles.optionalTag}>optional</span></div>
+            <div style={styles.coverHint}>{coverPreview ? "Tap to change — shows behind your leaderboard" : "Add a banner behind the leaderboard"}</div>
+          </div>
+          {coverPreview && <button style={styles.coverClear} onClick={() => { setCoverFile(null); setCoverPreview(null); }}>✕</button>}
+          <input ref={coverRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onCover} />
+        </div>
+
+        {/* individual vs teams */}
+        <div style={styles.formRow}>
+          <span style={styles.fieldLabel}>Format</span>
+          <div style={styles.toggle}>
+            <button style={{ ...styles.toggleBtn, ...(mode === "individual" ? styles.toggleOn : {}) }} onClick={() => setMode("individual")}>Individual</button>
+            <button style={{ ...styles.toggleBtn, ...(mode === "teams" ? styles.toggleOn : {}) }} onClick={() => setMode("teams")}>Teams</button>
+          </div>
+        </div>
+        {mode === "teams" && (
+          <div style={styles.teamSetupBox}>
+            <div style={styles.teamSetupRow}>
+              <span style={styles.fieldLabel}>How many teams?</span>
+              <div style={styles.toggle}>
+                {[2, 3, 4].map((n) => (
+                  <button key={n} style={{ ...styles.toggleBtn, ...(teamCount === n ? styles.toggleOn : {}) }} onClick={() => setTeamCount(n)}>{n}</button>
+                ))}
+              </div>
+            </div>
+            {TEAM_DEFS.slice(0, teamCount).map((t) => {
+              const cur = teams[t.id] || {};
+              return (
+                <div key={t.id} style={styles.teamEditRow}>
+                  <input style={styles.teamEmojiInput} value={cur.emoji ?? t.emoji} maxLength={2}
+                    onChange={(e) => setTeams((ts) => ({ ...ts, [t.id]: { ...ts[t.id], emoji: e.target.value } }))} />
+                  <input style={{ ...styles.chatInput, flex: 1 }} value={cur.label ?? t.label}
+                    onChange={(e) => setTeams((ts) => ({ ...ts, [t.id]: { ...ts[t.id], label: e.target.value } }))}
+                    placeholder={t.label} />
+                  <span style={{ ...styles.teamColorDot, background: t.color }} />
+                </div>
+              );
+            })}
+            <div style={styles.coverHint}>Players pick their own team when they join. You can reassign anyone anytime.</div>
+          </div>
+        )}
+
         <input style={styles.inputBig} placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
         <div style={styles.formRow}>
           <SizeInfoLabel />
@@ -671,6 +735,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
       {tab === "leaderboard" && (
         partyDrinks > 0 ? (
           <>
+            {ev.event?.cover_url && <div style={{ ...styles.coverBanner, backgroundImage: `url(${ev.event.cover_url})` }}><div style={styles.coverBannerScrim}><span style={styles.coverBannerName}>{eventName}</span></div></div>}
             {(settings.teamCount || 0) > 0 && <TeamStandings people={people} settings={settings} now={liveNow} drinks={drinksMap} />}
             <Leaderboard people={people} now={liveNow} accent={theme.accent} stars={stars} toggleStar={toggleStar} />
             <GroupStats people={people} now={liveNow} drinks={drinksMap} />
@@ -2161,7 +2226,7 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
           </div>
           <div style={styles.settingHint}>When on, a little banner pops up when anyone logs a drink (only while the app's open — these aren't phone push notifications). Off by default.</div>
           <div style={{ ...styles.settingRow, marginTop: 10 }}>
-            <span style={styles.settingLabel}>🏓 Beer Pong <InfoInline text="A mini-game. Challenge someone from their Stats card → take turns sinking cups by flicking the ball. The more you've drunk, the more cups you have to clear. Off by default. Doesn't affect the leaderboard." /></span>
+            <span style={styles.settingLabel}>🏓 Beer Pong (beta) <InfoInline text="A mini-game. Challenge someone from their Stats card → take turns timing your aim and power to sink 10 cups. Off by default. Doesn't affect the leaderboard." /></span>
             <button style={{ ...styles.toggleBtn, ...(fightsEnabled ? styles.toggleOn : {}) }} onClick={() => setFightsEnabled(!fightsEnabled)}>{fightsEnabled ? "On" : "Off"}</button>
           </div>
         </div>

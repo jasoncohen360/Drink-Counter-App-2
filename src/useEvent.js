@@ -20,7 +20,7 @@ function randomCode() {
 }
 
 // Create a brand-new event. Returns { eventId, joinCode } or throws.
-export async function createEvent({ eventName, hostName, size, sex, weightLb, settings, hostPhone }) {
+export async function createEvent({ eventName, hostName, size, sex, weightLb, settings, hostPhone, coverFile }) {
   // try a few times in case of a code collision (rare)
   for (let attempt = 0; attempt < 5; attempt++) {
     const join_code = randomCode();
@@ -32,6 +32,13 @@ export async function createEvent({ eventName, hostName, size, sex, weightLb, se
     if (error) {
       if (error.code === "23505") continue; // unique violation on join_code, retry
       throw error;
+    }
+    // optional cover photo: upload then save url (best-effort; don't fail event creation)
+    if (coverFile) {
+      try {
+        const url = await uploadChatPhoto(ev.id, coverFile);
+        await supabase.from("events").update({ cover_url: url }).eq("id", ev.id);
+      } catch (e) { /* ignore cover failure */ }
     }
     // add the host as the first person
     const { data: host, error: pErr } = await supabase
