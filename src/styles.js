@@ -395,6 +395,7 @@ export const styles = {
   coverBannerScrim: { width: "100%", padding: "20px 14px 10px", background: "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 100%)" },
   coverBannerName: { color: "#fff", fontFamily: SERIF, fontSize: 20, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.6)" },
   claimBtn: { width: "100%", background: "rgba(122,176,107,0.18)", border: "1px solid rgba(122,176,107,0.5)", color: "#a8d49a", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 600, cursor: "pointer", marginBottom: 8 },
+  settingGoBtn: { background: "rgba(232,160,112,0.18)", border: "1px solid rgba(232,160,112,0.5)", color: "#e8a070", borderRadius: 8, padding: "7px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   chaseSetupBtn: { width: "100%", background: "rgba(232,160,112,0.14)", border: "1px solid rgba(232,160,112,0.45)", color: "#e8a070", borderRadius: 12, padding: "12px", fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 12 },
   chickenTag: { fontSize: 9, fontWeight: 700, color: "#15182a", background: "#e8a070", borderRadius: 4, padding: "1px 5px", marginLeft: 6, verticalAlign: "middle", letterSpacing: 0.5 },
   chaseWrap: { background: "rgba(232,160,112,0.07)", border: "1px solid rgba(232,160,112,0.25)", borderRadius: 14, padding: 14, marginBottom: 12 },

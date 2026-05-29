@@ -97,17 +97,17 @@ export async function claimPerson(personId, phone) {
 
 // Join an existing event as a new person. Returns the person row.
 export async function joinEvent({ eventId, name, size, sex, weightLb, phone, team }) {
-  const { data, error } = await supabase
-    .from("people")
-    .insert({
-      event_id: eventId, name: name || "Guest", phone: phone || null,
-      size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "guest", team: team || null,
-      claimed: true,
-    })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  const base = {
+    event_id: eventId, name: name || "Guest", phone: phone || null,
+    size: size || "medium", sex: sex || "male", weight_lb: weightLb || 170, role: "guest", team: team || null,
+  };
+  // try with claimed flag; if the column doesn't exist yet, retry without it
+  let res = await supabase.from("people").insert({ ...base, claimed: true }).select().single();
+  if (res.error && /claimed/.test(res.error.message || "")) {
+    res = await supabase.from("people").insert(base).select().single();
+  }
+  if (res.error) throw res.error;
+  return res.data;
 }
 
 // Permanently delete an event and everything in it (host only, by choice).
@@ -188,15 +188,18 @@ export function useEvent(eventId) {
   const reload = useCallback(async () => {
     if (!eventId) return;
     try {
+      // optional tables (added in later stages) shouldn't break the whole load if
+      // their SQL hasn't been run yet — wrap each so a missing table → empty list.
+      const safe = (p) => p.then((r) => r).catch(() => ({ data: [] }));
       const [{ data: ev }, { data: ppl }, { data: dl }, { data: ch }, { data: sc }, { data: rx }, { data: fg }, { data: fd }] = await Promise.all([
         supabase.from("events").select("*").eq("id", eventId).single(),
         supabase.from("people").select("*").eq("event_id", eventId),
         supabase.from("drink_log").select("*").eq("event_id", eventId),
         supabase.from("chat").select("*").eq("event_id", eventId),
-        supabase.from("shot_calls").select("*").eq("event_id", eventId),
-        supabase.from("reactions").select("*").eq("event_id", eventId),
-        supabase.from("fights").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(100),
-        supabase.from("finds").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(200),
+        safe(supabase.from("shot_calls").select("*").eq("event_id", eventId)),
+        safe(supabase.from("reactions").select("*").eq("event_id", eventId)),
+        safe(supabase.from("fights").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(100)),
+        safe(supabase.from("finds").select("*").eq("event_id", eventId).order("created_at", { ascending: false }).limit(200)),
       ]);
       setEvent(ev || null);
       setPeople(ppl || []);

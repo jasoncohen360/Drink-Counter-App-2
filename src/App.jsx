@@ -233,7 +233,7 @@ function CreateScreen({ phone, name, setName, onBack, onCreated }) {
             : <button style={styles.coverAddBtn} onClick={() => coverRef.current?.click()}>🖼️</button>}
           <div style={{ flex: 1 }}>
             <div style={styles.coverLabel}>Cover photo <span style={styles.optionalTag}>optional</span></div>
-            <div style={styles.coverHint}>{coverPreview ? "Tap to change — shows behind your leaderboard" : "Add a banner behind the leaderboard"}</div>
+            <div style={styles.coverHint}>{coverPreview ? "Shown as a wide banner — center is kept, top & bottom may crop" : "Wide banner behind the leaderboard. Landscape works best (center stays visible)"}</div>
           </div>
           {coverPreview && <button style={styles.coverClear} onClick={() => { setCoverFile(null); setCoverPreview(null); }}>✕</button>}
           <input ref={coverRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onCover} />
@@ -676,6 +676,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
   if (showSettings) {
     return <SettingsScreen settings={settings} amHost={amHost}
       onSave={(s) => { actions.saveSettings(s); setShowSettings(false); }}
+      onSetupChase={() => { setShowSettings(false); setShowChickenAssign(true); }}
       onCancel={() => setShowSettings(false)} />;
   }
 
@@ -2259,7 +2260,7 @@ function SuggestionBox() {
 // ============================================================
 // SETTINGS
 // ============================================================
-function SettingsScreen({ settings, amHost, onSave, onCancel }) {
+function SettingsScreen({ settings, amHost, onSave, onSetupChase, onCancel }) {
   const init = settings && settings.legalLimit != null ? settings : defaultSettings();
   const [stateCode, setStateCode] = useState(init.state || "NJ");
   const [limit, setLimit] = useState(init.legalLimit ?? 0.08);
@@ -2421,6 +2422,11 @@ function SettingsScreen({ settings, amHost, onSave, onCancel }) {
             <span style={styles.settingLabel}>🏓 Beer Pong (beta) <InfoInline text="A mini-game. Challenge someone from their Stats card → take turns timing your aim and power to sink 10 cups. Off by default. Doesn't affect the leaderboard." /></span>
             <button style={{ ...styles.toggleBtn, ...(fightsEnabled ? styles.toggleOn : {}) }} onClick={() => setFightsEnabled(!fightsEnabled)}>{fightsEnabled ? "On" : "Off"}</button>
           </div>
+          <div style={{ ...styles.settingRow, marginTop: 10 }}>
+            <span style={styles.settingLabel}>🐔 Chicken Chase <InfoInline text="A hide-and-seek bar game. Pick 1–4 people to hide; everyone else hunts them and joins their flock when found. Most-drinking flock wins. Drinking still tracks normally." /></span>
+            <button style={styles.settingGoBtn} onClick={() => onSetupChase && onSetupChase()}>{(settings.chickens || []).length > 0 ? "Manage" : "Set up"}</button>
+          </div>
+          <div style={styles.settingHint}>Opens the chicken picker. You can also start it from the 🏆 leaderboard tab.</div>
         </div>
       )}
 
