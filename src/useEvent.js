@@ -425,6 +425,13 @@ export function useEvent(eventId) {
     removeCover: async () => {
       await supabase.from("events").update({ cover_url: null }).eq("id", eventId);
     },
+    renameTeam: async (teamId, label, emoji) => {
+      const { data: cur } = await supabase.from("events").select("settings").eq("id", eventId).single();
+      const s = cur?.settings || {};
+      const teams = { ...(s.teams || {}) };
+      teams[teamId] = { ...(teams[teamId] || {}), label, emoji };
+      await supabase.from("events").update({ settings: { ...s, teams } }).eq("id", eventId);
+    },
     saveSettings: async (settings) => {
       await supabase.from("events").update({ settings }).eq("id", eventId);
     },

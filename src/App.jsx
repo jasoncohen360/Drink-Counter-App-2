@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   DRINKS, DRINK_EMOJIS, SIZES, SIZES_BY_SEX, weightFor, POUR, DEFAULT_POUR, STATES, THEMES, defaultSettings,
   getDrinks, getSizes, getTheme, getLegalLimit, bacDescriptor, bacAtTime, drinkCountAtTime,
-  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, BOGGS_NUMBER, isChicken, chickenList,
+  peakBAC, drinksPerHour, bacRatePerHour, favoriteDrink, bestStretchOverall, valueAt, LINE_COLORS, TEAM_DEFS, teamStats, teamList, teamMeta, teamValueAt, BOGGS_NUMBER, isChicken, chickenList,
 } from "./engine.js";
 
 // tiny convenience wrappers for team display
@@ -799,6 +799,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
               <Leaderboard people={people} now={liveNow} accent={theme.accent} stars={stars} toggleStar={toggleStar} chickenIds={chickenIds} />
               <GroupStats people={people} now={liveNow} drinks={drinksMap} />
               <FavoriteDrinksChart people={people} drinks={drinksMap} />
+              {(settings.teamCount || 0) > 0 && <TeamTimeline people={people} settings={settings} now={liveNow} drinks={drinksMap} />}
               <TimelineGraph people={people} now={liveNow} metric={metric} setMetric={setMetric} legalLimit={legalLimit} />
             </>
           ) : (!chaseOn && <div style={styles.emptyState}>No drinks yet. Tap the <b>＋</b> below to start logging.</div>)}
@@ -817,6 +818,7 @@ function LiveScreen({ ev, myPersonId, liveNow, onLeave }) {
                     onClick={() => { if (!(settings.teamsLocked && me.team)) actions.setTeam(me.id, t.id); }}>{t.emoji} {t.label}</button>
                 ))}
               </div>
+              {me.team && <TeamNameEditor settings={settings} teamId={me.team} actions={actions} />}
             </div>
           )}
           {[...people].sort((a, b) => {
@@ -1001,32 +1003,59 @@ function LiveFeed({ people, now, drinks = DRINKS, chat = [], shotCalls = [] }) {
 // ============================================================
 // TEAM STANDINGS
 // ============================================================
+function TeamNameEditor({ settings, teamId, actions }) {
+  const meta = teamMeta(settings, teamId);
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(meta.label);
+  const [emoji, setEmoji] = useState(meta.emoji);
+  if (!editing) {
+    return <button style={styles.teamRenameBtn} onClick={() => { setLabel(meta.label); setEmoji(meta.emoji); setEditing(true); }}>✏️ Edit team name</button>;
+  }
+  return (
+    <div style={styles.teamRenameRow}>
+      <input style={styles.teamEmojiInput} value={emoji} maxLength={2} onChange={(e) => setEmoji(e.target.value)} />
+      <input style={{ ...styles.chatInput, flex: 1 }} value={label} maxLength={20} onChange={(e) => setLabel(e.target.value)} placeholder="Team name" />
+      <button style={styles.chatSend} onClick={() => { actions.renameTeam(teamId, label.trim() || meta.label, emoji || meta.emoji); setEditing(false); }}>Save</button>
+    </div>
+  );
+}
+
 function TeamStandings({ people, settings, now, drinks }) {
-  const teams = teamStats(people, settings, now, drinks);
-  const maxAvg = Math.max(0.001, ...teams.map((t) => t.avg));
+  const [sortBy, setSortBy] = useState("total");
+  const teams = teamStats(people, settings, now, drinks, sortBy);
+  const maxVal = Math.max(0.001, ...teams.map((t) => sortBy === "avg" ? t.avg : t.total));
   const anyMembers = teams.some((t) => t.members.length > 0);
   return (
     <div style={styles.lbWrap}>
-      <div style={styles.lbTitle}>🚩 Team standings</div>
-      {!anyMembers && <div style={styles.chatEmpty}>No one's picked a team yet — head to My Drinks to join one.</div>}
-      {teams.map((t, i) => (
-        <div key={t.id} style={styles.teamRow}>
-          <span style={styles.lbRank}>{i === 0 && t.avg > 0 ? "👑" : i + 1}</span>
-          <div style={{ flex: 1 }}>
-            <div style={styles.teamRowHead}>
-              <span style={{ ...styles.teamDot, background: t.color }} />
-              <span style={styles.teamName}>{t.label}</span>
-              <span style={styles.teamMembers}>{t.members.length} {t.members.length === 1 ? "person" : "people"}</span>
-            </div>
-            <div style={styles.teamBarTrack}><div style={{ ...styles.teamBarFill, width: `${(t.avg / maxAvg) * 100}%`, background: t.color }} /></div>
-          </div>
-          <div style={styles.teamScore}>
-            <div style={{ ...styles.teamAvg, color: t.color }}>{t.avg.toFixed(1)}</div>
-            <div style={styles.teamTotal}>{t.total} total</div>
-          </div>
+      <div style={styles.lbHead}>
+        <div style={styles.lbTitle}>🚩 Team standings</div>
+        <div style={styles.metricToggle}>
+          <button style={{ ...styles.metricBtn, ...(sortBy === "total" ? styles.metricOn : {}) }} onClick={() => setSortBy("total")}>Total</button>
+          <button style={{ ...styles.metricBtn, ...(sortBy === "avg" ? styles.metricOn : {}) }} onClick={() => setSortBy("avg")}>Avg</button>
         </div>
-      ))}
-      <div style={styles.settingHint}>Ranked by average drinks per person.</div>
+      </div>
+      {!anyMembers && <div style={styles.chatEmpty}>No one's picked a team yet — head to My Drinks to join one.</div>}
+      {teams.map((t, i) => {
+        const lead = sortBy === "avg" ? t.avg : t.total;
+        return (
+          <div key={t.id} style={styles.teamRow}>
+            <span style={styles.lbRank}>{i === 0 && lead > 0 ? "👑" : i + 1}</span>
+            <div style={{ flex: 1 }}>
+              <div style={styles.teamRowHead}>
+                <span style={{ ...styles.teamDot, background: t.color }} />
+                <span style={styles.teamName}>{t.label}</span>
+                <span style={styles.teamMembers}>{t.members.length} {t.members.length === 1 ? "person" : "people"}</span>
+              </div>
+              <div style={styles.teamBarTrack}><div style={{ ...styles.teamBarFill, width: `${(lead / maxVal) * 100}%`, background: t.color }} /></div>
+            </div>
+            <div style={styles.teamScore}>
+              <div style={{ ...styles.teamAvg, color: t.color }}>{sortBy === "avg" ? t.avg.toFixed(1) : t.total}</div>
+              <div style={styles.teamTotal}>{sortBy === "avg" ? `${t.total} total` : `${t.avg.toFixed(1)} avg`}</div>
+            </div>
+          </div>
+        );
+      })}
+      <div style={styles.settingHint}>Ranked by {sortBy === "avg" ? "average drinks per person" : "total team drinks"}.</div>
     </div>
   );
 }
@@ -1363,6 +1392,56 @@ function TimelineGraph({ people, now, metric, setMetric, legalLimit = 0.08 }) {
       </div>
       <div style={styles.legend}>{series.map((s) => <span key={s.person.id} style={styles.legendItem}><span style={{ ...styles.legendDot, background: s.color }} />{s.person.name}</span>)}</div>
       <div style={styles.scrubHint}>{scrubT != null ? `${metric === "bac" ? "BAC" : "Drinks"} at ${fmtTime(scrubT)}` : "Press and drag across the chart to rewind the night"}</div>
+    </div>
+  );
+}
+
+// Team chart — one line per team (total drinks, or avg BAC)
+function TeamTimeline({ people, settings, now, drinks }) {
+  const W = 320, H = 180, padL = 34, padR = 10, padT = 14, padB = 24;
+  const [metric, setMetric] = useState("drinks");
+  const teams = teamList(settings).map((t) => ({ ...t, members: people.filter((p) => p.team === t.id) })).filter((t) => t.members.length > 0);
+  const allTs = people.flatMap((p) => p.log.map((d) => d.t));
+  if (teams.length === 0 || allTs.length === 0) return null;
+  const t0 = Math.min(...allTs);
+  const t1 = Math.max(now, t0 + 120000);
+  const span = t1 - t0;
+  const STEPS = 40;
+  const sampleTimes = Array.from({ length: STEPS + 1 }, (_, i) => t0 + (span * i) / STEPS);
+  let maxV = 0;
+  const series = teams.map((t) => {
+    const pts = sampleTimes.map((tt) => { const v = teamValueAt(t.members, tt, metric, drinks); if (v > maxV) maxV = v; return { t: tt, v }; });
+    return { team: t, color: t.color, pts };
+  });
+  if (maxV <= 0) maxV = 1;
+  const x = (t) => padL + ((t - t0) / span) * (W - padL - padR);
+  const y = (v) => H - padB - (v / maxV) * (H - padT - padB);
+  const yLabel = (v) => (metric === "bac" ? v.toFixed(2) : Math.round(v));
+  return (
+    <div style={styles.graphWrap}>
+      <div style={styles.graphHead}>
+        <span style={styles.graphTitle}>🚩 Teams over the night</span>
+        <div style={styles.metricToggle}>
+          {[{ key: "drinks", label: "Total" }, { key: "bac", label: "Avg BAC" }].map((m) => (
+            <button key={m.key} style={{ ...styles.metricBtn, ...(metric === m.key ? styles.metricOn : {}) }} onClick={() => setMetric(m.key)}>{m.label}</button>
+          ))}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => { const gv = maxV * f; return (
+          <g key={i}>
+            <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+            <text x={padL - 5} y={y(gv) + 3} fontSize="8" fill="#6f758c" textAnchor="end">{yLabel(gv)}</text>
+          </g>
+        ); })}
+        {series.map((s, i) => (
+          <polyline key={i} fill="none" stroke={s.color} strokeWidth="2"
+            points={s.pts.map((pt) => `${x(pt.t)},${y(pt.v)}`).join(" ")} />
+        ))}
+      </svg>
+      <div style={styles.teamChartLegend}>
+        {series.map((s) => <span key={s.team.id} style={styles.teamLegendItem}><span style={{ ...styles.teamDot, background: s.color }} /> {s.team.emoji} {s.team.label}</span>)}
+      </div>
     </div>
   );
 }

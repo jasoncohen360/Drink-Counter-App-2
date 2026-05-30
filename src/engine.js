@@ -189,14 +189,23 @@ export function teamList(settings) {
 export function teamMeta(settings, teamId) {
   return teamList(settings).find((t) => t.id === teamId) || null;
 }
-export function teamStats(people, settings, now, drinks) {
+export function teamStats(people, settings, now, drinks, sortBy = "total") {
   const active = teamList(settings);
   return active.map((t) => {
     const members = people.filter((p) => p.team === t.id);
     const total = members.reduce((a, p) => a + drinkCountAtTime(p, now), 0);
     const avg = members.length ? total / members.length : 0;
-    return { ...t, members, total, avg };
-  }).sort((a, b) => b.avg - a.avg);
+    const avgBac = members.length ? members.reduce((a, p) => a + bacAtTime(p, now, drinks), 0) / members.length : 0;
+    return { ...t, members, total, avg, avgBac };
+  }).sort((a, b) => sortBy === "avg" ? (b.avg - a.avg) : (b.total - a.total));
+}
+
+export function teamValueAt(members, t, metric, drinks) {
+  if (metric === "bac") {
+    if (!members.length) return 0;
+    return members.reduce((a, p) => a + bacAtTime(p, t, drinks), 0) / members.length; // avg BAC
+  }
+  return members.reduce((a, p) => a + drinkCountAtTime(p, t), 0); // total drinks
 }
 
 // The legend: Wade Boggs and a flight's worth of beers.
